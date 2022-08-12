@@ -1,7 +1,0 @@
-    # Callbacks that will be run during various phases of training. See the
-    # `DefaultCallbacks` class and `examples/custom_metrics_and_callbacks.py`
-    # for more usage information.
-    "callbacks": DefaultCallbacks,
-
-
-    

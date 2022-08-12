@@ -60,10 +60,8 @@ class PolypharmacyEnv(gym.Env):
         observation_combi = torch.zeros(self.n_dim)
         observation_combi[begin_rx_idx] = 1
 
-        self.current_state = observation_combi
+        self.current_state = observation_combi.float()
         self.step_count = 0
-
-        print(number_of_rx)
 
         return self.current_state
 
