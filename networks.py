@@ -112,10 +112,6 @@ class RayNetwork(TorchModelV2, nn.Module):
         else:
             is_training = bool(input_dict.get("is_training", False))
 
-        # Set the correct train-mode for our hidden module (only important
-        # b/c we have some batch-norm layers).
-        self._hidden_layers.train(mode=is_training)
-
         # Set observations as float because of possible MultiBinary
         # MultiBinary sets 0,1 as Char (int8)
         self._hidden_out = self._hidden_layers(input_dict["obs"].float())
@@ -126,6 +122,21 @@ class RayNetwork(TorchModelV2, nn.Module):
     def value_function(self):
         assert self._hidden_out is not None, "must call forward first!"
         return torch.reshape(self._value_branch(self._hidden_out), [-1])
+
+    def full_vf(self, x):
+        """For custom use / evaluation only. Is not compatible with regular RLLib workflow
+
+        Args:
+            x (torch.Tensor): Input to the VF network, state.
+
+        Returns:
+            torch.Tensor: Value of the given observation
+        """
+        self._hidden_layers.eval()
+        x = self._hidden_layers(x)
+        x = self._value_branch(x)
+        self._hidden_layers.train()
+        return x
 
 
 class NetworkDropout(nn.Module):

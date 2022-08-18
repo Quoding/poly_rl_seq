@@ -12,14 +12,6 @@ REASON_TO_REWARD_MAP = {
     "end_action_no_end": -1,
 }
 
-DEFAULT_CONFIG = {
-    "dataset_name": "set it yourself",
-    "noise": 0,
-    "min_n_rx": 5,
-    "horizon": 20,
-    "step_penalty": 1,
-}
-
 
 class PolypharmacyEnv(gym.Env):
     def __init__(self, config):
@@ -51,6 +43,8 @@ class PolypharmacyEnv(gym.Env):
 
         self.END_ACTION = self.n_dim
 
+        self.all_observed_states = []
+
     def reset(self):
         # Sample an random number of Rx to set active
         number_of_rx = random.randint(self.min_n_rx, MAX_N_RX)
@@ -61,9 +55,17 @@ class PolypharmacyEnv(gym.Env):
         observation_combi[begin_rx_idx] = 1
 
         self.current_state = observation_combi.float()
+        self.record_state()
+        self._bind_state_to_dataset()
         self.step_count = 0
 
         return self.current_state
+
+    def get_obs_states(self):
+        return self.all_observed_states
+
+    def record_state(self):
+        self.all_observed_states.append(self.current_state.clone())
 
     def _is_done(self, action):
         state_sum = self.current_state.sum()
@@ -103,6 +105,7 @@ class PolypharmacyEnv(gym.Env):
         # Update state if action wasn't to end the episode
         if action != self.END_ACTION:
             self.current_state[action] = (self.current_state[action].bool() ^ 1).float()
+            self.record_state()
 
         # If we have a shortcut to the reward, take it.
         if reason in REASON_TO_REWARD_MAP.keys():
