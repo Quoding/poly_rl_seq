@@ -29,6 +29,7 @@ class PolypharmacyEnv(gym.Env):
         self.combis, self.risks, self.pat_vecs, self.n_obs, self.n_dim = load_dataset(
             self.dataset_name
         )
+
         # Possible Rx IDs to select. Add 1 to n_dim so we have a special "exit" action available to the agent
         self.action_space = gym.spaces.Discrete(self.n_dim + 1)
 
@@ -44,6 +45,7 @@ class PolypharmacyEnv(gym.Env):
         self.END_ACTION = self.n_dim
 
         self.all_observed_states = []
+        self.all_observed_states_idx = set()
 
     def reset(self):
         # Sample an random number of Rx to set active
@@ -55,16 +57,19 @@ class PolypharmacyEnv(gym.Env):
         observation_combi[begin_rx_idx] = 1
 
         self.current_state = observation_combi.float()
-        self.record_state()
         self._bind_state_to_dataset()
         self.step_count = 0
 
         return self.current_state
 
+    def get_obs_states_idx(self):
+        return self.all_observed_states_idx
+
     def get_obs_states(self):
         return self.all_observed_states
 
-    def record_state(self):
+    def record_state(self, idx):
+        self.all_observed_states_idx.add(idx)
         self.all_observed_states.append(self.current_state.clone())
 
     def _is_done(self, action):
@@ -95,6 +100,7 @@ class PolypharmacyEnv(gym.Env):
         dists = torch.norm(self.current_state - self.combis, dim=1, p=1)
         knn_idx = dists.topk(1, largest=False).indices[0]
         self.current_state = self.combis[knn_idx]
+        self.record_state(knn_idx.item())
         return knn_idx
 
     def step(self, action):
@@ -105,7 +111,6 @@ class PolypharmacyEnv(gym.Env):
         # Update state if action wasn't to end the episode
         if action != self.END_ACTION:
             self.current_state[action] = (self.current_state[action].bool() ^ 1).float()
-            self.record_state()
 
         # If we have a shortcut to the reward, take it.
         if reason in REASON_TO_REWARD_MAP.keys():
@@ -117,3 +122,117 @@ class PolypharmacyEnv(gym.Env):
             reward = reward.item()
 
         return self.current_state, reward, done, done_dict
+
+
+class SingleStartPolypharmacyEnv(gym.Env):
+    def __init__(self, config):
+        # Setup variables with configuration
+        self.dataset_name = config["dataset_name"]
+        self.min_n_rx = config["min_n_rx"]
+        self.horizon = config["horizon"]
+        self.step_penalty = config["step_penalty"]
+
+        noise = config["noise"]
+
+        self.mean_noise = torch.tensor([0.0])
+        self.std_noise = torch.tensor([noise])
+
+        self.combis, self.risks, self.pat_vecs, self.n_obs, self.n_dim = load_dataset(
+            self.dataset_name
+        )
+
+        # Possible Rx IDs to select. Add 1 to n_dim so we have a special "exit" action available to the agent
+        self.action_space = gym.spaces.Discrete(self.n_dim + 1)
+
+        # Full set of possible combinations
+        self.observation_space = gym.spaces.MultiBinary(self.n_dim)
+
+        # State equivalent
+        self.current_state = None
+        self.last_reward = 0
+
+        self.step_count = 0
+
+        self.END_ACTION = self.n_dim
+
+        self.all_observed_states = []
+        self.all_observed_states_idx = set()
+
+    def reset(self):
+        observation_combi = torch.zeros(self.n_dim)
+
+        self.current_state = observation_combi.float()
+        self.step_count = 0
+
+        return self.current_state
+
+    def get_obs_states_idx(self):
+        return self.all_observed_states_idx
+
+    def get_obs_states(self):
+        return self.all_observed_states
+
+    def record_state(self, idx):
+        self.all_observed_states_idx.add(idx)
+        self.all_observed_states.append(self.current_state.clone())
+
+    def _is_done(self, action):
+        state_sum = self.current_state.sum()
+
+        # Agent decided to stop and he is allowed to.
+        if action == self.END_ACTION:
+            if state_sum >= self.min_n_rx:
+                return {"done": True, "reason": "end_action"}
+            else:
+                return {"done": False, "reason": "end_action_no_end"}
+        # If agent has the maximum number of Rx to consider Polypharmacy
+        elif state_sum > MAX_N_RX:
+            return {"done": True, "reason": "max_rx"}
+        # Agent played the max amount of steps
+        elif self.step_count >= self.horizon:
+            return {"done": True, "reason": "max_steps"}
+
+        else:
+            return {"done": False, "reason": "not_done"}
+
+    def _bind_state_to_dataset(self):
+        """1-NN search of the current state in dataset vectors
+
+        Returns:
+            torch.Tensor: nearest neighbor of `vec` in `set_existing_vecs`
+        """
+        dists = torch.norm(self.current_state - self.combis, dim=1, p=1)
+        knn_idx = dists.topk(1, largest=False).indices[0]
+        self.current_state = self.combis[knn_idx]
+        self.record_state(knn_idx.item())
+        return knn_idx
+
+    def step(self, action):
+        done_dict = self._is_done(action)
+        done = done_dict["done"]
+        reason = done_dict["reason"]
+
+        # Update state if action wasn't to end the episode
+        if action != self.END_ACTION:
+            self.current_state[action] = 1
+
+        # If we have a shortcut to the reward, take it.
+        if reason in REASON_TO_REWARD_MAP.keys():
+            reward = REASON_TO_REWARD_MAP[reason]
+        else:
+            knn_idx = self._bind_state_to_dataset()
+            reward_noise = torch.normal(self.mean_noise, self.std_noise)
+            reward = self.risks[knn_idx] + reward_noise - self.step_penalty
+            reward = reward.item()
+
+        return self.current_state, reward, done, done_dict
+
+
+def env_creator(env_config):
+    env_name = env_config["env_name"]
+    if env_name == "randomstart":
+        return PolypharmacyEnv(env_config)
+    elif env_name == "singlestart":
+        return SingleStartPolypharmacyEnv(env_config)
+    else:
+        raise Exception("Env name is not mapped to an existing env class")

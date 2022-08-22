@@ -4,6 +4,7 @@ DEFAULT_ENV_CONFIG = {
     "min_n_rx": 5,
     "horizon": 20,
     "step_penalty": 1,
+    "env_name": "randomstart",
 }
 
 DEFAULT_REPLAY_BUFFER_CONFIG = {

@@ -1,33 +1,15 @@
+import argparse
 import json
+from os.path import exists
+from typing import Any, Dict, Tuple
 
 import pandas as pd
 import torch
-from typing import Dict, Tuple, Any
-from ray.rllib.algorithms.callbacks import DefaultCallbacks
 from ray.rllib.env import BaseEnv
 from ray.rllib.evaluation import Episode, RolloutWorker
 from ray.rllib.policy import Policy
 from ray.rllib.policy.sample_batch import SampleBatch
 from ray.rllib.utils.typing import AgentID, PolicyID
-from os.path import exists
-
-obs_tracking = []
-
-
-class TrackingCallback(DefaultCallbacks):
-    def on_postprocess_trajectory(
-        self,
-        *,
-        worker: "RolloutWorker",
-        episode: Episode,
-        agent_id: AgentID,
-        policy_id: PolicyID,
-        policies: Dict[PolicyID, Policy],
-        postprocessed_batch: SampleBatch,
-        original_batches: Dict[AgentID, Tuple[Policy, SampleBatch]],
-        **kwargs,
-    ) -> None:
-        pass
 
 
 def warmup(n_obs):
@@ -93,9 +75,9 @@ def compute_metrics(
     thresh,
     pat_vecs,
     true_sol_idx,
-    n_sigmas,
     all_flagged_combis_idx,
     all_flagged_pats_idx,
+    seen_idx="all",
 ):
     """Compute metrics for combination test
 
@@ -123,9 +105,14 @@ def compute_metrics(
         updated all flagged combis,
         updated all flagged pats,
     """
+    if seen_idx != "all":
+        seen_idx = torch.tensor(list(seen_idx))
+        combis = combis[seen_idx]
+    else:
+        seen_idx = torch.tensor(list(range(len(combis))))
 
     # Parmis tous les vecteurs "existant", lesquels je trouve ? (Jaccard, ratio_app)
-    sol_idx = set(torch.where(vf_net(combis) > thresh)[0].tolist())
+    sol_idx = set(seen_idx[torch.where(vf_net(combis) > thresh)[0]].tolist())
 
     all_flagged_combis_idx.update(sol_idx)
 
@@ -144,8 +131,8 @@ def compute_metrics(
     )  # Jaccard for all steps before + this one if we keep all previous solutions
 
     # Combien de patrons tels quels j'ai flag ?
-    percent_found_pat = len(sol_pat_idx) / len(pat_vecs)  # For this step
-    percent_found_pat_all = len(all_flagged_pats_idx) / len(
+    ratio_found_pat = len(sol_pat_idx) / len(pat_vecs)  # For this step
+    ratio_found_pat_all = len(all_flagged_pats_idx) / len(
         pat_vecs
     )  # For all previous steps and this one
 
@@ -164,11 +151,11 @@ def compute_metrics(
 
     metrics_dict["jaccard"] = jaccard
     metrics_dict["ratio_app"] = ratio_app
-    metrics_dict["percent_found_pat"] = percent_found_pat
+    metrics_dict["ratio_found_pat"] = ratio_found_pat
     metrics_dict["n_inter"] = n_inter
     metrics_dict["jaccard_all"] = jaccard_all
     metrics_dict["ratio_app_all"] = ratio_app_all
-    metrics_dict["percent_found_pat_all"] = percent_found_pat_all
+    metrics_dict["ratio_found_pat_all"] = ratio_found_pat_all
     metrics_dict["n_inter_all"] = n_inter_all
 
     return (
@@ -178,5 +165,65 @@ def compute_metrics(
     )
 
 
-def train(trainer, n_episodes, eval_every):
-    pass
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train an RL agent on a given dataset")
+
+    parser.add_argument(
+        "-T", "--trials", type=int, default=200, help="Number of steps per iterations"
+    )
+    parser.add_argument(
+        "-I", "--iters", type=int, default=100, help="Number of steps per iterations"
+    )
+    parser.add_argument(
+        "-d", "--dataset", required=True, help="Name of dataset (located in datasets/*)"
+    )
+    parser.add_argument(
+        "-t",
+        "--threshold",
+        type=float,
+        default=1.1,
+        help="Good and bad action threshold",
+    )
+    parser.add_argument(
+        "-s",
+        "--seed",
+        type=int,
+        default=42,
+        help="Set random seed base for training",
+    )
+    parser.add_argument(
+        "-w",
+        "--width",
+        type=int,
+        default=128,
+        help="Width of the NN (number of neurons)",
+    )
+    parser.add_argument(
+        "-l",
+        "--layers",
+        type=int,
+        default=1,
+        help="Number of hidden layers",
+    )
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=100,
+        help="Number of warmup steps",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default="metrics/ouput/",
+        help="Output directory for metrics and agents",
+    )
+    parser.add_argument(
+        "--env",
+        type=str,
+        default="randomstart",
+        choices=["randomstart", "singlestart"],
+        help="Environment class to use",
+    )
+    args = parser.parse_args()
+    return args
