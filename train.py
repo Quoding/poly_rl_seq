@@ -152,17 +152,23 @@ except IndexError as e:
 for item in l:
     os.makedirs(f"{args.output}/{item}/", exist_ok=True)
 
-# torch.save(agent, f"{args.output}/agents/{seed}.pth")
-trainer.save(f"{args.output}/agents/{seed}/")
-torch.save(jaccards, f"{args.output}/jaccards/{seed}.pth")
-torch.save(ratio_apps, f"{args.output}/ratio_apps/{seed}.pth")
-torch.save(ratio_found_pats, f"{args.output}/ratio_found_pats/{seed}.pth")
-torch.save(losses, f"{args.output}/losses/{seed}.pth")
-torch.save(dataset_losses, f"{args.output}/dataset_losses/{seed}.pth")
-torch.save(jaccards_alls, f"{args.output}/jaccards_alls/{seed}.pth")
-torch.save(ratio_apps_alls, f"{args.output}/ratio_apps_alls/{seed}.pth")
-torch.save(ratio_found_pats_alls, f"{args.output}/ratio_found_pats_alls/{seed}.pth")
-torch.save(n_inter_alls, f"{args.output}/n_inter_alls/{seed}.pth")
-torch.save(all_flagged_risks, f"{args.output}/all_flagged_risks/{seed}.pth")
-torch.save(all_flagged_combis_idx, f"{args.output}/all_flagged_combis_idx/{seed}.pth")
-torch.save(all_observed_states_idx, f"{args.output}/all_observed_states_idx/{seed}.pth")
+# torch.save(agent, f"{args.output}/agents/{args.seed}.pth")
+trainer.save(f"{args.output}/agents/{args.seed}/")
+torch.save(jaccards, f"{args.output}/jaccards/{args.seed}.pth")
+torch.save(ratio_apps, f"{args.output}/ratio_apps/{args.seed}.pth")
+torch.save(ratio_found_pats, f"{args.output}/ratio_found_pats/{args.seed}.pth")
+torch.save(losses, f"{args.output}/losses/{args.seed}.pth")
+torch.save(dataset_losses, f"{args.output}/dataset_losses/{args.seed}.pth")
+torch.save(jaccards_alls, f"{args.output}/jaccards_alls/{args.seed}.pth")
+torch.save(ratio_apps_alls, f"{args.output}/ratio_apps_alls/{args.seed}.pth")
+torch.save(
+    ratio_found_pats_alls, f"{args.output}/ratio_found_pats_alls/{args.seed}.pth"
+)
+torch.save(n_inter_alls, f"{args.output}/n_inter_alls/{args.seed}.pth")
+torch.save(all_flagged_risks, f"{args.output}/all_flagged_risks/{args.seed}.pth")
+torch.save(
+    all_flagged_combis_idx, f"{args.output}/all_flagged_combis_idx/{args.seed}.pth"
+)
+torch.save(
+    all_observed_states_idx, f"{args.output}/all_observed_states_idx/{args.seed}.pth"
+)

@@ -1,7 +1,7 @@
 DEFAULT_ENV_CONFIG = {
     "dataset_name": "set it yourself",
     "noise": 0,
-    "min_n_rx": 5,
+    "min_n_rx": 2,
     "horizon": 20,
     "step_penalty": 1,
     "env_name": "randomstart",
