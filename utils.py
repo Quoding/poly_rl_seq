@@ -10,11 +10,40 @@ from ray.rllib.evaluation import Episode, RolloutWorker
 from ray.rllib.policy import Policy
 from ray.rllib.policy.sample_batch import SampleBatch
 from ray.rllib.utils.typing import AgentID, PolicyID
+from torch.utils.data import DataLoader, Dataset
+from torch.optim import Adam
+from torch.nn import MSELoss
+from torch.nn.functional import softmax
 
 
-def warmup(n_obs):
-    # Play n_obs times without any logic just to gather experience. Sample randomly from environment.
-    pass
+# class PretrainDataset(Dataset):
+#     def __init__(self, X, y):
+#         self.X = X
+#         self.y = y
+
+#     def __getitem__(self, idx):
+#         return self.X[idx], self.y[idx]
+
+#     def __len__(self):
+#         return len(self.X)
+
+
+# def pretrain(X, y, vf, n_epochs=100, pessimistic=True):
+#     y = y - (pessimistic * 0.5)
+#     dataset = PretrainDataset(X, y)
+#     # Play n_obs times without any logic just to gather experience. Sample randomly from environment.
+#     dataloader = DataLoader(dataset, batchsize=512, shuffle=True)
+#     optim = Adam(vf.parameters(), lr=0.01)
+#     criterion = MSELoss()
+#     for e in range(n_epochs):
+#         for X, y in dataloader:
+#             preds = vf(X)
+#             loss = criterion(preds, y)
+#             loss.backward()
+#             optim.step()
+#             optim.zero_grad()
+
+#     return vf
 
 
 def load_dataset(dataset_name, path_to_dataset="datasets"):
@@ -70,7 +99,7 @@ def compute_jaccard(found_solution: set, true_solution: set):
 
 
 def compute_metrics(
-    vf_net,
+    net,
     combis,
     thresh,
     pat_vecs,
@@ -78,6 +107,7 @@ def compute_metrics(
     all_flagged_combis_idx,
     all_flagged_pats_idx,
     seen_idx="all",
+    step_penalty=1,
 ):
     """Compute metrics for combination test
 
@@ -112,12 +142,15 @@ def compute_metrics(
         seen_idx = torch.tensor(list(range(len(combis))))
 
     # Parmis tous les vecteurs "existant", lesquels je trouve ? (Jaccard, ratio_app)
-    sol_idx = set(seen_idx[torch.where(vf_net(combis) > thresh)[0]].tolist())
+    action_probs = softmax(net(combis), dim=1)
+    state_values = net.value_function(combis)
+
+    sol_idx = set(seen_idx[torch.where(net(combis) > thresh)[0]].tolist())
 
     all_flagged_combis_idx.update(sol_idx)
 
     # Parmis les patrons dangereux (ground truth), combien j'en trouve tels quels
-    sol_pat_idx = set(torch.where(vf_net(pat_vecs) > thresh)[0].tolist())
+    sol_pat_idx = set(torch.where(net(pat_vecs) > thresh)[0].tolist())
 
     all_flagged_pats_idx.update(sol_pat_idx)
 

@@ -67,7 +67,7 @@ trainer = ppo.PPOTrainer(
         "framework": "torch",
         "env_config": env_config,
         # "num_workers": 0,
-        "num_gpus": 1,
+        "num_gpus": 0,
         "model": {
             "custom_model": "BNNetwork",
             "custom_model_config": {"use_bn": True},
@@ -89,7 +89,24 @@ for i in range(args.iters):
     with torch.no_grad():
         # Evaluate custom metrics
         # Get value function
-        vf = trainer.get_policy().model.full_vf
+        from torch.nn.functional import softmax
+
+        net = trainer.get_policy().model
+        logits, _ = net({"obs": combis})
+        state_values = net.value_function()  # (100000, 50)
+        taken_actions = torch.argmax(logits, dim=0)  # (100000, 1)
+
+        next_states_combis = combis.clone()
+        # TODO test
+        if env_name == "randomstart":
+            combi_bits = next_states_combis.gather(1, taken_actions)
+            combi_bits = torch.logical_not(combi_bits)
+            next_states_combis = next_states_combis.scatter(
+                1, taken_actions, combi_bits
+            )
+        elif env_name == "singlestart":
+            # if env is single start, we can only set to one
+            next_states_combis = next_states_combis.scatter(1, taken_actions, 1)
 
         (metrics_dict, all_flagged_combis_idx, all_flagged_pats_idx) = compute_metrics(
             vf,

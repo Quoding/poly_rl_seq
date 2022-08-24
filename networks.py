@@ -11,7 +11,7 @@ from ray.rllib.utils.annotations import override
 from ray.rllib.utils.typing import ModelConfigDict
 from ray.rllib.policy.sample_batch import SampleBatch
 
-CUSTOM_MODEL_CONFIG = {"bn": True}
+CUSTOM_MODEL_CONFIG = {"bn": True, "dropout": 0}
 
 
 class Network(nn.Module):
@@ -68,6 +68,7 @@ class RayNetwork(TorchModelV2, nn.Module):
         # custom_model_config is a kwargs
         custom_model_config = kwargs.get("custom_model_config", {})
         use_bn = custom_model_config.get("bn", True)
+        dropout_rate = custom_model_config.get("dropout", 0)
 
         # List of layer sizes
         hiddens = list(model_config.get("fcnet_hiddens", []))
@@ -88,6 +89,8 @@ class RayNetwork(TorchModelV2, nn.Module):
             prev_layer_size = size
             if use_bn:
                 layers.append(nn.BatchNorm1d(prev_layer_size))
+            if dropout_rate > 0:
+                layers.append(nn.Dropout(p=dropout_rate))
 
         self._hidden_layers = nn.Sequential(*layers)
 
@@ -123,7 +126,7 @@ class RayNetwork(TorchModelV2, nn.Module):
         assert self._hidden_out is not None, "must call forward first!"
         return torch.reshape(self._value_branch(self._hidden_out), [-1])
 
-    def full_vf(self, x):
+    def get_state_value(self, x):
         """For custom use / evaluation only. Is not compatible with regular RLLib workflow
 
         Args:
@@ -134,9 +137,22 @@ class RayNetwork(TorchModelV2, nn.Module):
         """
         self._hidden_layers.eval()
         x = self._hidden_layers(x)
+        logits = self._logits(x)
         x = self._value_branch(x)
         self._hidden_layers.train()
         return x
+
+    def enable_dropout(self):
+        """Function to enable the dropout layers during test-time"""
+        for m in self.modules():
+            if m.__class__.__name__.startswith("Dropout"):
+                m.train()
+
+    def disable_dropout(self):
+        """Function to enable the dropout layers during test-time"""
+        for m in self.modules():
+            if m.__class__.__name__.startswith("Dropout"):
+                m.eval()
 
 
 class NetworkDropout(nn.Module):
