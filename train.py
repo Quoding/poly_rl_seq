@@ -89,24 +89,33 @@ for i in range(args.iters):
     with torch.no_grad():
         # Evaluate custom metrics
         # Get value function
-        from torch.nn.functional import softmax
+        # from torch.nn.functional import softmax
 
-        net = trainer.get_policy().model
+        net = trainer.get_policy().model.to(device)
         logits, _ = net({"obs": combis})
-        state_values = net.value_function()  # (100000, 50)
-        taken_actions = torch.argmax(logits, dim=0)  # (100000, 1)
-
+        state_values = net.value_function()  # (100000, 51)
+        taken_actions = torch.argmax(logits, dim=1).unsqueeze(0)  # (100000, 1)
         next_states_combis = combis.clone()
-        # TODO test
+        # TODO test - Problem: what is V(s_t+1) when action is end ?
+        env_name = env_config["env_name"]
         if env_name == "randomstart":
             combi_bits = next_states_combis.gather(1, taken_actions)
-            combi_bits = torch.logical_not(combi_bits)
+            print(combi_bits)
+            print(combi_bits.shape)
+            combi_bits = torch.logical_not(combi_bits).float()
+            print(combi_bits)
             next_states_combis = next_states_combis.scatter(
                 1, taken_actions, combi_bits
             )
         elif env_name == "singlestart":
             # if env is single start, we can only set to one
             next_states_combis = next_states_combis.scatter(1, taken_actions, 1)
+
+        next_state_values = net({"obs": next_states_combis})
+
+        adjusted_state_values = (state_values) - next_state_values
+
+        print(adjusted_state_values)
 
         (metrics_dict, all_flagged_combis_idx, all_flagged_pats_idx) = compute_metrics(
             vf,
