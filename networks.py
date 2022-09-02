@@ -67,7 +67,7 @@ class RayNetwork(TorchModelV2, nn.Module):
         nn.Module.__init__(self)
         # custom_model_config is a kwargs
         custom_model_config = kwargs.get("custom_model_config", {})
-        use_bn = custom_model_config.get("bn", True)
+        use_bn = custom_model_config.get("bn", False)
         dropout_rate = custom_model_config.get("dropout", 0)
 
         # List of layer sizes

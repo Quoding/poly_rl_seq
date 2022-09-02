@@ -106,8 +106,10 @@ def compute_metrics(
     true_sol_idx,
     all_flagged_combis_idx,
     all_flagged_pats_idx,
+    env_name,
+    gamma,
+    step_penalty,
     seen_idx="all",
-    step_penalty=1,
 ):
     """Compute metrics for combination test
 
@@ -141,16 +143,23 @@ def compute_metrics(
     else:
         seen_idx = torch.tensor(list(range(len(combis))))
 
-    # Parmis tous les vecteurs "existant", lesquels je trouve ? (Jaccard, ratio_app)
-    action_probs = softmax(net(combis), dim=1)
-    state_values = net.value_function(combis)
+    all_combis_estimated_reward = get_estimated_state_reward(
+        net, combis, step_penalty, env_name, gamma
+    )
 
-    sol_idx = set(seen_idx[torch.where(net(combis) > thresh)[0]].tolist())
+    # Parmis tous les vecteurs "existant", lesquels je trouve ? (Jaccard, ratio_app)
+    sol_idx = set(
+        seen_idx[torch.where(all_combis_estimated_reward > thresh)[0]].tolist()
+    )
 
     all_flagged_combis_idx.update(sol_idx)
 
     # Parmis les patrons dangereux (ground truth), combien j'en trouve tels quels
-    sol_pat_idx = set(torch.where(net(pat_vecs) > thresh)[0].tolist())
+    all_pats_estimated_reward = get_estimated_state_reward(
+        net, pat_vecs, step_penalty, env_name, gamma
+    )
+
+    sol_pat_idx = set(torch.where(all_pats_estimated_reward > thresh)[0].tolist())
 
     all_flagged_pats_idx.update(sol_pat_idx)
 
@@ -195,7 +204,39 @@ def compute_metrics(
         metrics_dict,
         all_flagged_combis_idx,
         all_flagged_pats_idx,
+        all_combis_estimated_reward,
     )
+
+
+def get_estimated_state_reward(net, combis, step_penalty, env_name, gamma, plot=False):
+    d1, d2 = combis.shape
+    # Expand combis to have the extra terminal state
+    combis_states = torch.zeros(d1, d2 + 1)
+    combis_states[:, :d2] = combis
+
+    # Forward pass for state value
+    logits, _ = net({"obs": combis_states})
+    state_values = net.value_function()  # (100000, 51)
+
+    # Get next states and get their value to extract estimated reward
+    taken_actions = torch.argmax(logits, dim=1).unsqueeze(0)  # (100000, 1)
+    next_states = combis_states.clone()
+
+    if env_name == "randomstart":
+        combi_bits = next_states.gather(1, taken_actions)
+        combi_bits = torch.logical_not(combi_bits).float()
+        next_states = next_states.scatter(1, taken_actions, combi_bits)
+    elif env_name == "singlestart":
+        # if env is single start, we can only set to one
+        next_states = next_states.scatter(1, taken_actions, 1)
+
+    # Forward pass needs to happen on policy before value in computed
+    # Particular to RayNetwork taken from tutorial...
+    net({"obs": next_states})
+    next_state_values = net.value_function()
+
+    estimated_reward = (state_values + step_penalty) - gamma * next_state_values
+    return estimated_reward
 
 
 def parse_args():
@@ -257,6 +298,13 @@ def parse_args():
         default="randomstart",
         choices=["randomstart", "singlestart"],
         help="Environment class to use",
+    )
+
+    parser.add_argument(
+        "--gamma",
+        type=float,
+        default=0.99,
+        help="Value of discount factor",
     )
     args = parser.parse_args()
     return args

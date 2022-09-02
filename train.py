@@ -56,10 +56,6 @@ logging.info(f"There are {n_combis_in_sol} combinations in the solution set")
 
 
 ### SET UP NETWORK AND TRAINER ###
-ModelCatalog.register_custom_model(
-    "BNNetwork",
-    RayNetwork,
-)
 register_env("polyenv", env_creator)
 trainer = ppo.PPOTrainer(
     env="polyenv",
@@ -69,62 +65,48 @@ trainer = ppo.PPOTrainer(
         # "num_workers": 0,
         "num_gpus": 0,
         "model": {
-            "custom_model": "BNNetwork",
-            "custom_model_config": {"use_bn": True},
             "fcnet_hiddens": [args.width] * args.layers,
             "fcnet_activation": "relu",
         },
         "seed": args.seed,
         "horizon": env_config["horizon"],
         "train_batch_size": args.trials,
+        "gamma": args.gamma,
+        "sgd_minibatch_size": 64,
+        "num_sgd_iter": 100,
+        "use_gae": True,  # Try to get value function directly
+        "lr_schedule": None,
+        "lambda": 1,  # GAE estimation parameter1
+        "lr": 0.01,
     },
 )
 # Rollout fragment will be adjusted to a divider of `train_batch_size`
 
-
 ### TRAINING LOOP ###
 for i in range(args.iters):
     results = trainer.train()  # Get `train_batch_size` observations and learn on them
-
     with torch.no_grad():
         # Evaluate custom metrics
         # Get value function
-        # from torch.nn.functional import softmax
-
+        # lr sechd - get_policy().lr_schedule = schedule class
+        # alternative: trainer.save() - trainer.stop() - init a new trainer - trainer.restor(save_obj)
         net = trainer.get_policy().model.to(device)
-        logits, _ = net({"obs": combis})
-        state_values = net.value_function()  # (100000, 51)
-        taken_actions = torch.argmax(logits, dim=1).unsqueeze(0)  # (100000, 1)
-        next_states_combis = combis.clone()
-        # TODO test - Problem: what is V(s_t+1) when action is end ?
-        env_name = env_config["env_name"]
-        if env_name == "randomstart":
-            combi_bits = next_states_combis.gather(1, taken_actions)
-            print(combi_bits)
-            print(combi_bits.shape)
-            combi_bits = torch.logical_not(combi_bits).float()
-            print(combi_bits)
-            next_states_combis = next_states_combis.scatter(
-                1, taken_actions, combi_bits
-            )
-        elif env_name == "singlestart":
-            # if env is single start, we can only set to one
-            next_states_combis = next_states_combis.scatter(1, taken_actions, 1)
-
-        next_state_values = net({"obs": next_states_combis})
-
-        adjusted_state_values = (state_values) - next_state_values
-
-        print(adjusted_state_values)
-
-        (metrics_dict, all_flagged_combis_idx, all_flagged_pats_idx) = compute_metrics(
-            vf,
+        (
+            metrics_dict,
+            all_flagged_combis_idx,
+            all_flagged_pats_idx,
+            estimates,
+        ) = compute_metrics(
+            net,
             combis,
             args.threshold,
             pat_vecs,
             true_sol_idx,
             all_flagged_combis_idx,
             all_flagged_pats_idx,
+            env_config["env_name"],
+            args.gamma,
+            env_config["step_penalty"],
             seen_idx="all",
         )
 
@@ -144,13 +126,35 @@ for i in range(args.iters):
             f"jaccard all: {jaccards_alls[-1]}, ratio_app all: {ratio_apps_alls[-1]}, ratio of patterns found all: {ratio_found_pats_alls[-1]}, n_inter all: {n_inter_alls[-1]}"
         )
 
-# Record observed states to avoid scouring combinatorial space later
-all_observed_states_idx = [
-    ray.get(worker.foreach_env.remote(fn))
-    for worker in trainer.workers.remote_workers()
-]
-# Unpack dimensions (1st dim is workers, 2nd is envs, 3rd are observations)
-all_observed_states_idx = set(chain(*chain(*all_observed_states_idx)))
+        # Record observed states to avoid scouring combinatorial space later
+        all_observed_states_idx = [
+            ray.get(worker.foreach_env.remote(fn))
+            for worker in trainer.workers.remote_workers()
+        ]
+        # Unpack dimensions (1st dim is workers, 2nd is envs, 3rd are observations)
+        all_observed_states_idx = list(chain(*chain(*all_observed_states_idx)))
+        print(f"Number of unique states seen: {len(set(all_observed_states_idx))}")
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        laced_idx = [None] * ((i + 1) * args.trials)
+        laced_idx[::2] = all_observed_states_idx[: (i + 1) * (args.trials // 2)]
+        laced_idx[1::2] = all_observed_states_idx[
+            (i + 1) * (args.trials // 2) : (i + 1) * args.trials
+        ]
+        a = risks[torch.tensor(laced_idx)]
+        b = np.arange(len(a))
+
+        plt.scatter(b, a)
+        plt.savefig(f"viz/images/whatsplayed/{i}.png")
+        plt.clf()
+
+        plt.scatter(risks.cpu().numpy(), estimates.cpu().numpy())
+        plt.ylim(0, 3)
+        plt.xlim(0, 3)
+        plt.savefig(f"viz/images/pred_vs_gt/{i}.png")
+        plt.clf()
+        print("=======")
 
 # Save metrics on disk
 l = [

@@ -33,8 +33,8 @@ class PolypharmacyEnv(gym.Env):
         # Possible Rx IDs to select. Add 1 to n_dim so we have a special "exit" action available to the agent
         self.action_space = gym.spaces.Discrete(self.n_dim + 1)
 
-        # Full set of possible combinations
-        self.observation_space = gym.spaces.MultiBinary(self.n_dim)
+        # Full set of possible combinations + terminal state
+        self.observation_space = gym.spaces.MultiBinary(self.n_dim + 1)
 
         # State equivalent
         self.current_state = None
@@ -45,7 +45,7 @@ class PolypharmacyEnv(gym.Env):
         self.END_ACTION = self.n_dim
 
         self.all_observed_states = []
-        self.all_observed_states_idx = set()
+        self.all_observed_states_idx = []
 
     def reset(self):
         # Sample an random number of Rx to set active
@@ -53,7 +53,7 @@ class PolypharmacyEnv(gym.Env):
         # Sample `number_of_rx` integers. These are the Rx IDs to activate.
         begin_rx_idx = torch.randint(self.n_dim, size=(number_of_rx,))
         # Put the previously sampled combination in vector format
-        observation_combi = torch.zeros(self.n_dim)
+        observation_combi = torch.zeros(self.n_dim + 1)
         observation_combi[begin_rx_idx] = 1
 
         self.current_state = observation_combi.float()
@@ -69,7 +69,7 @@ class PolypharmacyEnv(gym.Env):
         return self.all_observed_states
 
     def record_state(self, idx):
-        self.all_observed_states_idx.add(idx)
+        self.all_observed_states_idx.append(idx)
         self.all_observed_states.append(self.current_state.clone())
 
     def _is_done(self, action):
@@ -97,9 +97,10 @@ class PolypharmacyEnv(gym.Env):
         Returns:
             torch.Tensor: nearest neighbor of `vec` in `set_existing_vecs`
         """
-        dists = torch.norm(self.current_state - self.combis, dim=1, p=1)
+        combi = self.current_state[:-1]
+        dists = torch.norm(combi - self.combis, dim=1, p=1)
         knn_idx = dists.topk(1, largest=False).indices[0]
-        self.current_state = self.combis[knn_idx]
+        self.current_state[:-1] = self.combis[knn_idx]
         self.record_state(knn_idx.item())
         return knn_idx
 
@@ -109,7 +110,7 @@ class PolypharmacyEnv(gym.Env):
         reason = done_dict["reason"]
 
         # Update state if action wasn't to end the episode
-        if action != self.END_ACTION:
+        if reason != "end_action_no_end":
             self.current_state[action] = (self.current_state[action].bool() ^ 1).float()
 
         # If we have a shortcut to the reward, take it.
@@ -121,10 +122,12 @@ class PolypharmacyEnv(gym.Env):
             reward = self.risks[knn_idx] + reward_noise - self.step_penalty
             reward = reward.item()
 
+        self.step_count += 1
+
         return self.current_state, reward, done, done_dict
 
 
-class SingleStartPolypharmacyEnv(gym.Env):
+class SingleStartPolypharmacyEnv(PolypharmacyEnv):
     def __init__(self, config):
         # Setup variables with configuration
         self.dataset_name = config["dataset_name"]
@@ -145,7 +148,7 @@ class SingleStartPolypharmacyEnv(gym.Env):
         self.action_space = gym.spaces.Discrete(self.n_dim + 1)
 
         # Full set of possible combinations
-        self.observation_space = gym.spaces.MultiBinary(self.n_dim)
+        self.observation_space = gym.spaces.MultiBinary(self.n_dim + 1)
 
         # State equivalent
         self.current_state = None
@@ -159,53 +162,12 @@ class SingleStartPolypharmacyEnv(gym.Env):
         self.all_observed_states_idx = set()
 
     def reset(self):
-        observation_combi = torch.zeros(self.n_dim)
+        observation_combi = torch.zeros(self.n_dim + 1)
 
         self.current_state = observation_combi.float()
         self.step_count = 0
 
         return self.current_state
-
-    def get_obs_states_idx(self):
-        return self.all_observed_states_idx
-
-    def get_obs_states(self):
-        return self.all_observed_states
-
-    def record_state(self, idx):
-        self.all_observed_states_idx.add(idx)
-        self.all_observed_states.append(self.current_state.clone())
-
-    def _is_done(self, action):
-        state_sum = self.current_state.sum()
-
-        # Agent decided to stop and he is allowed to.
-        if action == self.END_ACTION:
-            if state_sum >= self.min_n_rx:
-                return {"done": True, "reason": "end_action"}
-            else:
-                return {"done": False, "reason": "end_action_no_end"}
-        # If agent has the maximum number of Rx to consider Polypharmacy
-        elif state_sum > MAX_N_RX:
-            return {"done": True, "reason": "max_rx"}
-        # Agent played the max amount of steps
-        elif self.step_count >= self.horizon:
-            return {"done": True, "reason": "max_steps"}
-
-        else:
-            return {"done": False, "reason": "not_done"}
-
-    def _bind_state_to_dataset(self):
-        """1-NN search of the current state in dataset vectors
-
-        Returns:
-            torch.Tensor: nearest neighbor of `vec` in `set_existing_vecs`
-        """
-        dists = torch.norm(self.current_state - self.combis, dim=1, p=1)
-        knn_idx = dists.topk(1, largest=False).indices[0]
-        self.current_state = self.combis[knn_idx]
-        self.record_state(knn_idx.item())
-        return knn_idx
 
     def step(self, action):
         done_dict = self._is_done(action)
@@ -213,7 +175,7 @@ class SingleStartPolypharmacyEnv(gym.Env):
         reason = done_dict["reason"]
 
         # Update state if action wasn't to end the episode
-        if action != self.END_ACTION:
+        if reason != "end_action_no_end":
             self.current_state[action] = 1
 
         # If we have a shortcut to the reward, take it.
@@ -224,6 +186,8 @@ class SingleStartPolypharmacyEnv(gym.Env):
             reward_noise = torch.normal(self.mean_noise, self.std_noise)
             reward = self.risks[knn_idx] + reward_noise - self.step_penalty
             reward = reward.item()
+
+        self.step_count += 1
 
         return self.current_state, reward, done, done_dict
 

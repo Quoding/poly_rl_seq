@@ -1,0 +1,8 @@
+The algorithm needs to be model free:
+    In practice, we can't control which states will and won't be available to try to access. Played actions lead to states which are then bound to the dataset via nearest neighbor search.
+
+The algorithm needs to have a value function:
+    We need the VF to have a regressor on the RR space to query offline. This means that a pure policy based method won't work in our application. Actor-critic or Value-based RL would work here.
+
+Model-free Value Based RL
+Model-free AC RL
