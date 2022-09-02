@@ -107,6 +107,7 @@ for i in range(args.iters):
             env_config["env_name"],
             args.gamma,
             env_config["step_penalty"],
+            device=device,
             seen_idx="all",
         )
 

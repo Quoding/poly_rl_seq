@@ -109,6 +109,7 @@ def compute_metrics(
     env_name,
     gamma,
     step_penalty,
+    device,
     seen_idx="all",
 ):
     """Compute metrics for combination test
@@ -144,7 +145,7 @@ def compute_metrics(
         seen_idx = torch.tensor(list(range(len(combis))))
 
     all_combis_estimated_reward = get_estimated_state_reward(
-        net, combis, step_penalty, env_name, gamma
+        net, combis, step_penalty, env_name, gamma, device
     )
 
     # Parmis tous les vecteurs "existant", lesquels je trouve ? (Jaccard, ratio_app)
@@ -156,7 +157,7 @@ def compute_metrics(
 
     # Parmis les patrons dangereux (ground truth), combien j'en trouve tels quels
     all_pats_estimated_reward = get_estimated_state_reward(
-        net, pat_vecs, step_penalty, env_name, gamma
+        net, pat_vecs, step_penalty, env_name, gamma, device
     )
 
     sol_pat_idx = set(torch.where(all_pats_estimated_reward > thresh)[0].tolist())
@@ -208,11 +209,12 @@ def compute_metrics(
     )
 
 
-def get_estimated_state_reward(net, combis, step_penalty, env_name, gamma, plot=False):
+def get_estimated_state_reward(net, combis, step_penalty, env_name, gamma, device):
     d1, d2 = combis.shape
     # Expand combis to have the extra terminal state
     combis_states = torch.zeros(d1, d2 + 1)
     combis_states[:, :d2] = combis
+    combis_states = combis_states.to(device)
 
     # Forward pass for state value
     logits, _ = net({"obs": combis_states})
