@@ -159,7 +159,7 @@ class SingleStartPolypharmacyEnv(PolypharmacyEnv):
         self.END_ACTION = self.n_dim
 
         self.all_observed_states = []
-        self.all_observed_states_idx = set()
+        self.all_observed_states_idx = []
 
     def reset(self):
         observation_combi = torch.zeros(self.n_dim + 1)
