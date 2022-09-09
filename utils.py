@@ -1,74 +1,65 @@
 import argparse
-import json
 from os.path import exists
 from typing import Any, Dict, Tuple
 
-import pandas as pd
 import torch
 from ray.rllib.env import BaseEnv
 from ray.rllib.evaluation import Episode, RolloutWorker
+from ray.rllib.models import ModelCatalog
+from ray.rllib.models.preprocessors import NoPreprocessor
 from ray.rllib.policy import Policy
 from ray.rllib.policy.sample_batch import SampleBatch
 from ray.rllib.utils.typing import AgentID, PolicyID
+from ray.rllib.agents import ppo
 from torch.utils.data import DataLoader, Dataset
 from torch.optim import Adam
 from torch.nn import MSELoss
-from torch.nn.functional import softmax
+from ray.tune.registry import register_env
+from environments import env_creator, get_action_mask
+from networks import RayNetwork, CUSTOM_MODEL_CONFIG
 
 
-# class PretrainDataset(Dataset):
-#     def __init__(self, X, y):
-#         self.X = X
-#         self.y = y
+def get_trainer(
+    args,
+    env_config,
+):
+    register_env("polyenv", env_creator)
+    ModelCatalog.register_custom_model("custom_net", RayNetwork)
+    ModelCatalog.register_custom_preprocessor("noprep", NoPreprocessor)
 
-#     def __getitem__(self, idx):
-#         return self.X[idx], self.y[idx]
+    model_config = CUSTOM_MODEL_CONFIG
+    if "mask" in env_config["env_name"]:
+        model_config["use_masking"] = True
 
-#     def __len__(self):
-#         return len(self.X)
-
-
-# def pretrain(X, y, vf, n_epochs=100, pessimistic=True):
-#     y = y - (pessimistic * 0.5)
-#     dataset = PretrainDataset(X, y)
-#     # Play n_obs times without any logic just to gather experience. Sample randomly from environment.
-#     dataloader = DataLoader(dataset, batchsize=512, shuffle=True)
-#     optim = Adam(vf.parameters(), lr=0.01)
-#     criterion = MSELoss()
-#     for e in range(n_epochs):
-#         for X, y in dataloader:
-#             preds = vf(X)
-#             loss = criterion(preds, y)
-#             loss.backward()
-#             optim.step()
-#             optim.zero_grad()
-
-#     return vf
-
-
-def load_dataset(dataset_name, path_to_dataset="datasets"):
-
-    dataset = pd.read_csv(f"{path_to_dataset}/combinations/{dataset_name}.csv")
-
-    with open(f"{path_to_dataset}/patterns/{dataset_name}.json", "r") as f:
-        patterns = json.load(f)
-    # Remove last 3 columns that are risk, inter, dist
-    combis = dataset.iloc[:, :-3]
-
-    # Retrieve risks
-    risks = dataset.iloc[:, -3]
-
-    n_obs, n_dim = combis.shape
-
-    pat_vecs = torch.tensor(
-        [patterns[f"pattern_{i}"]["pattern"] for i in range(len(patterns))]
-    )
-    combis, risks = (
-        torch.tensor(combis.values).float(),
-        torch.tensor(risks.values).unsqueeze(1).float(),
+    # Rollout fragment will be adjusted to a divider of `train_batch_size`
+    trainer = ppo.PPOTrainer(
+        env="polyenv",
+        config={
+            "framework": "torch",
+            "env_config": env_config,
+            # "num_workers": 0,
+            "num_gpus": 0,
+            "model": {
+                "custom_model": "custom_net",
+                "custom_model_config": model_config,
+                "fcnet_hiddens": [args.width] * args.layers,
+                "fcnet_activation": "relu",
+            },
+            "seed": args.seed,
+            "horizon": env_config["horizon"],
+            "train_batch_size": args.trials,
+            "gamma": args.gamma,
+            "sgd_minibatch_size": args.batchsize,
+            "num_sgd_iter": args.epochs,
+            "use_gae": True,  # Try to get value function directly
+            "lr_schedule": None,
+            "lambda": 1,  # GAE estimation parameter
+            "lr": args.lr,
+            "preprocessor_pref": None,
+        },
     )
 
-    return combis, risks, pat_vecs, n_obs, n_dim
+    return trainer
 
 
 def make_deterministic(seed=42):
@@ -109,6 +100,7 @@ def compute_metrics(
     env_name,
     gamma,
     step_penalty,
+    masks,
     device,
     seen_idx="all",
 ):
@@ -145,7 +137,7 @@ def compute_metrics(
         seen_idx = torch.tensor(list(range(len(combis))))
 
     all_combis_estimated_reward = get_estimated_state_reward(
-        net, combis, step_penalty, env_name, gamma, device
+        net, combis, step_penalty, env_name, gamma, masks, device
     )
 
     # Parmis tous les vecteurs "existant", lesquels je trouve ? (Jaccard, ratio_app)
@@ -157,7 +149,7 @@ def compute_metrics(
 
     # Parmis les patrons dangereux (ground truth), combien j'en trouve tels quels
     all_pats_estimated_reward = get_estimated_state_reward(
-        net, pat_vecs, step_penalty, env_name, gamma, device
+        net, pat_vecs, step_penalty, env_name, gamma, 1, device
     )
 
     sol_pat_idx = set(torch.where(all_pats_estimated_reward > thresh)[0].tolist())
@@ -209,16 +201,53 @@ def compute_metrics(
     )
 
 
-def get_estimated_state_reward(net, combis, step_penalty, env_name, gamma, device):
+def get_estimated_state_reward(
+    net, combis, step_penalty, env_name, gamma, masks, device
+):
+    """Compute estimates of state's reward for every combinations in `combis`
+    Value function loss for PPO's critic:
+
+
+            rollout[Postprocessing.ADVANTAGES] = (
+                discounted_returns - rollout[SampleBatch.VF_PREDS]
+            )
+            train_batch[Postprocessing.VALUE_TARGETS] = rollout[Postprocessing.ADVANTAGES] + rollout[SampleBatch.VF_PREDS]
+
+            value_fn_out = model.value_function()
+            vf_loss = torch.pow(
+                value_fn_out - train_batch[Postprocessing.VALUE_TARGETS], 2.0
+            )
+            vf_loss_clipped = torch.clamp(vf_loss, 0, self.config["vf_clip_param"])
+            mean_vf_loss = reduce_mean_valid(vf_loss_clipped)
+
+
+
+    Args:
+        net ([type]): [description]
+        combis ([type]): [description]
+        step_penalty ([type]): [description]
+        env_name ([type]): [description]
+        gamma ([type]): [description]
+        device ([type]): [description]
+
+    Returns:
+        [type]: [description]
+    """
     d1, d2 = combis.shape
     # Expand combis to have the extra terminal state
     combis_states = torch.zeros(d1, d2 + 1)
     combis_states[:, :d2] = combis
     combis_states = combis_states.to(device)
 
+    if masks is not None:
+        obs = {"obs": {"observations": combis_states, "action_mask": masks}}
+    else:
+        obs = {"obs": combis_states}
+
     # Forward pass for state value
-    logits, _ = net({"obs": combis_states})
-    state_values = net.value_function()  # (100000, 51)
+    logits, _ = net(obs)
+    state_values = net.value_function()
+    # state_values = trainer..value_function()  # (100000, 51)
 
     # Get next states and get their value to extract estimated reward
     taken_actions = torch.argmax(logits, dim=1).unsqueeze(0)  # (100000, 1)
@@ -232,9 +261,14 @@ def get_estimated_state_reward(net, combis, step_penalty, env_name, gamma, devic
         # if env is single start, we can only set to one
         next_states = next_states.scatter(1, taken_actions, 1)
 
-    # Forward pass needs to happen on policy before value in computed
+    # Forward pass needs to happen on policy before value is computed
     # Particular to RayNetwork taken from tutorial...
-    net({"obs": next_states})
+    if masks is not None:
+        obs = {"obs": {"observations": next_states, "action_mask": 1}}
+    else:
+        obs = {"obs": next_states}
+
+    net(obs)
     next_state_values = net.value_function()
 
     estimated_reward = (state_values + step_penalty) - gamma * next_state_values
@@ -298,7 +332,7 @@ def parse_args():
         "--env",
         type=str,
         default="randomstart",
-        choices=["randomstart", "singlestart"],
+        choices=["randomstart", "singlestart", "maskedrandom", "maskedsingle"],
         help="Environment class to use",
     )
 
@@ -308,5 +342,46 @@ def parse_args():
         default=0.99,
         help="Value of discount factor",
     )
+
+    parser.add_argument(
+        "--batchsize",
+        type=int,
+        default=64,
+        help="Minibatch size for gradient based optimizer",
+    )
+
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=100,
+        help="Number of epochs during training for NN",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=0.01,
+        help="Learning rate for gradient descent",
+    )
     args = parser.parse_args()
     return args
+
+
+def get_precomputed_action_mask(env_name, dataset_name, combis, device):
+    if "mask" in env_name:
+        print("Mask usage detected")
+        if exists(f"datasets/masks/{dataset_name}.pth"):
+            print("Loading precomputed masks")
+            masks = torch.load(f"datasets/masks/{dataset_name}.pth")
+        else:
+            print("No precomputed masks found. Computing them right now.")
+            d1, d2 = combis.shape
+            masks = torch.zeros(d1, d2 + 1)
+            combis_states = torch.zeros(d1, d2 + 1)
+            combis_states[:, :d2] = combis
+            combis_states = combis_states.to(device)
+            for i in range(len(combis_states)):
+                masks[i] = get_action_mask(combis_states[i], d2, combis)
+
+            torch.save(masks, f"datasets/masks/{dataset_name}.pth")
+        return masks
+    return None

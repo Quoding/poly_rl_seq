@@ -4,5 +4,22 @@ The algorithm needs to be model free:
 The algorithm needs to have a value function:
     We need the VF to have a regressor on the RR space to query offline. This means that a pure policy based method won't work in our application. Actor-critic or Value-based RL would work here.
 
+Things to consider:
+    - If we don't bind on the dataset and precompute all available actions to play at each step, then we can use model based RL. Trade-off between computational overhead and sample efficiency?
+
+Current problems:
+    - On-policy RL (e.g. PPO) cannot warm up. This can lead to poor exploration since the model is stuck in a loop where it gathers poor data and trains on it.
+        - Possible solution: Warm up via Behavior Cloning
+
+    - Agent could potentially get stuck in a state where no matter the action, it can rebind to the same state every time.
+        - Possible solution: Precompute available actions that will lead to new states. Mask those that stay in same state.
+                             Potentially costly to compute at every step.
+
+    - Distributional shift on environment - Can the agent actually handle it? If we bind states to data, an action won't lead to the same state every time new data is sampled. If we don't rebind, then perhaps the environment is too sparse to reach new states by just changing one bit.
+
+TODO:
+- Pre compute every available action at every time step. Do not rebind methinks. Binding will lead to more noise on the estimates.
+
 Model-free Value Based RL
 Model-free AC RL
+

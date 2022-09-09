@@ -6,16 +6,14 @@ import gym
 import ray
 import torch
 import torch.nn as nn
-from ray.rllib.agents import ppo
 from ray.rllib.evaluation import worker_set
 from ray.rllib.models import ModelCatalog
-from ray.tune.registry import register_env
 
 import utils
 from configs import DEFAULT_ENV_CONFIG, DEFAULT_REPLAY_BUFFER_CONFIG
-from environments import env_creator
+from environments import env_creator, load_dataset
 from networks import RayNetwork
-from utils import compute_metrics, load_dataset, parse_args
+from utils import compute_metrics, parse_args, get_trainer, get_precomputed_action_mask
 
 logging.basicConfig(level=logging.INFO)
 
@@ -28,6 +26,11 @@ env_config = DEFAULT_ENV_CONFIG
 env_config["dataset_name"] = args.dataset
 env_config["env_name"] = args.env
 
+combis, risks, pat_vecs, n_obs, n_dim = load_dataset(env_config["dataset_name"])
+combis = combis.to(device)
+pat_vecs = pat_vecs.to(device)
+
+masks = get_precomputed_action_mask(args.env, args.dataset, combis, device=device)
 
 #### METRICS STORAGE ####
 jaccards = []
@@ -42,9 +45,7 @@ dataset_losses = []
 all_flagged_combis_idx = set()
 all_flaggeds_risks = []
 all_flagged_pats_idx = set()
-combis, risks, pat_vecs, n_obs, n_dim = load_dataset(env_config["dataset_name"])
-combis = combis.to(device)
-pat_vecs = pat_vecs.to(device)
+
 
 # Define true solution
 true_sol_idx = torch.where(risks > args.threshold)[0]
@@ -56,31 +57,7 @@ logging.info(f"There are {n_combis_in_sol} combinations in the solution set")
 
 
 ### SET UP NETWORK AND TRAINER ###
-register_env("polyenv", env_creator)
-trainer = ppo.PPOTrainer(
-    env="polyenv",
-    config={
-        "framework": "torch",
-        "env_config": env_config,
-        # "num_workers": 0,
-        "num_gpus": 0,
-        "model": {
-            "fcnet_hiddens": [args.width] * args.layers,
-            "fcnet_activation": "relu",
-        },
-        "seed": args.seed,
-        "horizon": env_config["horizon"],
-        "train_batch_size": args.trials,
-        "gamma": args.gamma,
-        "sgd_minibatch_size": 64,
-        "num_sgd_iter": 100,
-        "use_gae": True,  # Try to get value function directly
-        "lr_schedule": None,
-        "lambda": 1,  # GAE estimation parameter1
-        "lr": 0.01,
-    },
-)
-# Rollout fragment will be adjusted to a divider of `train_batch_size`
+trainer = get_trainer(args, env_config)
 
 ### TRAINING LOOP ###
 for i in range(args.iters):
@@ -107,6 +84,7 @@ for i in range(args.iters):
             env_config["env_name"],
             args.gamma,
             env_config["step_penalty"],
+            masks,
             device=device,
             seen_idx="all",
         )

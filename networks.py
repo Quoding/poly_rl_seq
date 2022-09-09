@@ -11,7 +11,7 @@ from ray.rllib.utils.annotations import override
 from ray.rllib.utils.typing import ModelConfigDict
 from ray.rllib.policy.sample_batch import SampleBatch
 
-CUSTOM_MODEL_CONFIG = {"bn": True, "dropout": 0}
+CUSTOM_MODEL_CONFIG = {"bn": False, "dropout": 0, "use_masking": False}
 
 
 class Network(nn.Module):
@@ -65,15 +65,17 @@ class RayNetwork(TorchModelV2, nn.Module):
             self, obs_space, action_space, num_outputs, model_config, name
         )
         nn.Module.__init__(self)
+
         # custom_model_config is a kwargs
         custom_model_config = kwargs.get("custom_model_config", {})
         use_bn = custom_model_config.get("bn", False)
         dropout_rate = custom_model_config.get("dropout", 0)
-
+        self.use_masking = custom_model_config.get("use_masking", True)
+        orig_space = getattr(obs_space, "original_space", obs_space)
         # List of layer sizes
         hiddens = list(model_config.get("fcnet_hiddens", []))
         activation = model_config.get("fcnet_activation")
-        prev_layer_size = int(np.prod(obs_space.shape))
+        prev_layer_size = int(np.prod(orig_space["observations"].n))
 
         layers = []
         # Create layers 0 to second-last.
@@ -115,10 +117,18 @@ class RayNetwork(TorchModelV2, nn.Module):
         else:
             is_training = bool(input_dict.get("is_training", False))
 
+        if self.use_masking:
+            mask = input_dict["obs"]["action_mask"]
+            obs = input_dict["obs"]["observations"]
+        else:
+            obs = input_dict["obs"]
+            mask = 1
+
         # Set observations as float because of possible MultiBinary
         # MultiBinary sets 0,1 as Char (int8)
-        self._hidden_out = self._hidden_layers(input_dict["obs"].float())
+        self._hidden_out = self._hidden_layers(obs.float())
         logits = self._logits(self._hidden_out)
+        logits = logits * mask
         return logits, []
 
     @override(ModelV2)
