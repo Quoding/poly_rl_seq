@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 
 ray.init()
 args = parse_args()
-fn = lambda env: env.get_obs_states_idx()
+get_obs_fn = lambda env: env.get_obs_states_idx()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Set parameters via config / args
 env_config = DEFAULT_ENV_CONFIG
@@ -57,10 +57,10 @@ logging.info(f"There are {n_combis_in_sol} combinations in the solution set")
 
 
 ### SET UP NETWORK AND TRAINER ###
-trainer = get_trainer(args, env_config)
-
+trainer = get_trainer(args, env_config, device)
 ### TRAINING LOOP ###
 for i in range(args.iters):
+    print(i)
     results = trainer.train()  # Get `train_batch_size` observations and learn on them
     with torch.no_grad():
         # Evaluate custom metrics
@@ -107,33 +107,36 @@ for i in range(args.iters):
 
         # Record observed states to avoid scouring combinatorial space later
         all_observed_states_idx = [
-            ray.get(worker.foreach_env.remote(fn))
+            ray.get(worker.foreach_env.remote(get_obs_fn))
             for worker in trainer.workers.remote_workers()
         ]
+        print(all_observed_states_idx)
         # Unpack dimensions (1st dim is workers, 2nd is envs, 3rd are observations)
         all_observed_states_idx = list(chain(*chain(*all_observed_states_idx)))
-        print(f"Number of unique states seen: {len(set(all_observed_states_idx))}")
-        import matplotlib.pyplot as plt
-        import numpy as np
+        logging.info(
+            f"Number of unique states seen: {len(set(all_observed_states_idx))}"
+        )
+        # import matplotlib.pyplot as plt
+        # import numpy as np
 
-        laced_idx = [None] * ((i + 1) * args.trials)
-        laced_idx[::2] = all_observed_states_idx[: (i + 1) * (args.trials // 2)]
-        laced_idx[1::2] = all_observed_states_idx[
-            (i + 1) * (args.trials // 2) : (i + 1) * args.trials
-        ]
-        a = risks[torch.tensor(laced_idx)]
-        b = np.arange(len(a))
+        # laced_idx = [None] * ((i + 1) * args.trials)
+        # laced_idx[::2] = all_observed_states_idx[: (i + 1) * (args.trials // 2)]
+        # laced_idx[1::2] = all_observed_states_idx[
+        #     (i + 1) * (args.trials // 2) : (i + 1) * args.trials
+        # ]
+        # a = risks[torch.tensor(laced_idx)]
+        # b = np.arange(len(a))
 
-        plt.scatter(b, a)
-        plt.savefig(f"viz/images/whatsplayed/{i}.png")
-        plt.clf()
+        # plt.scatter(b, a)
+        # plt.savefig(f"viz/images/whatsplayed/{i}.png")
+        # plt.clf()
 
-        plt.scatter(risks.cpu().numpy(), estimates.cpu().numpy())
-        plt.ylim(0, 3)
-        plt.xlim(0, 3)
-        plt.savefig(f"viz/images/pred_vs_gt/{i}.png")
-        plt.clf()
-        print("=======")
+        # plt.scatter(risks.cpu().numpy(), estimates.cpu().numpy())
+        # plt.ylim(0, 3)
+        # plt.xlim(0, 3)
+        # plt.savefig(f"viz/images/pred_vs_gt/{i}.png")
+        # plt.clf()
+        # print("=======")
 
 # Save metrics on disk
 l = [

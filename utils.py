@@ -6,58 +6,90 @@ import torch
 from ray.rllib.env import BaseEnv
 from ray.rllib.evaluation import Episode, RolloutWorker
 from ray.rllib.models import ModelCatalog
-from ray.rllib.models.preprocessors import NoPreprocessor
 from ray.rllib.policy import Policy
 from ray.rllib.policy.sample_batch import SampleBatch
 from ray.rllib.utils.typing import AgentID, PolicyID
-from ray.rllib.agents import ppo
+from ray.rllib.algorithms import ppo, dqn
 from torch.utils.data import DataLoader, Dataset
 from torch.optim import Adam
 from torch.nn import MSELoss
 from ray.tune.registry import register_env
 from environments import env_creator, get_action_mask
-from networks import RayNetwork, CUSTOM_MODEL_CONFIG
+from networks import (
+    RayNetwork,
+    PreDistRayNetwork,
+    MaskableDQNTorchModel,
+    CUSTOM_MODEL_CONFIG,
+)
+
+# trainer_names_map = {"ppo": ppo.PPOTrainer, "dqn": }
 
 
-def get_trainer(
-    args,
-    env_config,
-):
+def get_trainer(args, env_config, device):
     register_env("polyenv", env_creator)
-    ModelCatalog.register_custom_model("custom_net", RayNetwork)
-    ModelCatalog.register_custom_preprocessor("noprep", NoPreprocessor)
 
     model_config = CUSTOM_MODEL_CONFIG
     if "mask" in env_config["env_name"]:
         model_config["use_masking"] = True
 
     # Rollout fragment will be adjusted to a divider of `train_batch_size`
-    trainer = ppo.PPOTrainer(
-        env="polyenv",
-        config={
-            "framework": "torch",
-            "env_config": env_config,
-            # "num_workers": 0,
-            "num_gpus": 0,
-            "model": {
-                "custom_model": "custom_net",
-                "custom_model_config": model_config,
-                "fcnet_hiddens": [args.width] * args.layers,
-                "fcnet_activation": "relu",
+    if args.agent == "ppo":
+        ModelCatalog.register_custom_model("ppo_custom_net", RayNetwork)
+        trainer = ppo.PPO(
+            env="polyenv",
+            config={
+                "framework": "torch",
+                "env_config": env_config,
+                # "num_workers": 0,
+                "num_gpus": 1 if device == torch.device("cuda") else 0,
+                "model": {
+                    "custom_model": "ppo_custom_net",
+                    "custom_model_config": model_config,
+                    "fcnet_hiddens": [args.width] * args.layers,
+                    "fcnet_activation": "relu",
+                },
+                "seed": args.seed,
+                "horizon": env_config["horizon"],
+                "train_batch_size": args.trials,
+                "gamma": args.gamma,
+                "sgd_minibatch_size": args.batchsize,
+                "num_sgd_iter": args.epochs,
+                "lr": args.lr,
             },
-            "seed": args.seed,
-            "horizon": env_config["horizon"],
-            "train_batch_size": args.trials,
-            "gamma": args.gamma,
-            "sgd_minibatch_size": args.batchsize,
-            "num_sgd_iter": args.epochs,
-            "use_gae": True,  # Try to get value function directly
-            "lr_schedule": None,
-            "lambda": 1,  # GAE estimation parameter
-            "lr": args.lr,
-            "preprocessor_pref": None,
-        },
-    )
+        )
+    elif args.agent == "rainbow":
+        ModelCatalog.register_custom_model("dqn_custom_net", MaskableDQNTorchModel)
+
+        trainer = dqn.DQN(
+            env="polyenv",
+            config={
+                "framework": "torch",
+                "env_config": env_config,
+                "num_workers": 1,
+                "num_gpus": 1 if device == torch.device("cuda") else 0,
+                "model": {
+                    "custom_model": "dqn_custom_net",
+                    # "fcnet_hiddens": [],
+                    "fcnet_hiddens": [args.width] * args.layers,
+                    "fcnet_activation": "relu",
+                },
+                "seed": args.seed,
+                "horizon": env_config["horizon"],
+                "train_batch_size": args.trials,
+                "gamma": args.gamma,
+                "lr": args.lr,
+                "num_atoms": 51,  # Not detected ?
+                "v_min": -1,
+                "v_max": 5,
+                "n_step": 5,
+                "noisy": True,
+                "dueling": True,
+                "double_q": True,
+                "sigma0": 0.5,
+                "hiddens": [args.width],
+                "disable_env_checking": True,
+            },
+        )
 
     return trainer
 
@@ -361,6 +393,14 @@ def parse_args():
         type=float,
         default=0.01,
         help="Learning rate for gradient descent",
+    )
+
+    parser.add_argument(
+        "--agent",
+        type=str,
+        default="rainbow",
+        choices=["rainbow", "ppo"],
+        help="Agent to use",
     )
     args = parser.parse_args()
     return args
