@@ -1,6 +1,7 @@
 import gym
 import torch
 import random
+import numpy as np
 import pandas as pd
 import json
 
@@ -48,26 +49,11 @@ class PolypharmacyEnv(gym.Env):
         self.all_observed_states = []
         self.all_observed_states_idx = []
 
-    def reset_old(self):
-        # Sample an random number of Rx to set active
-        number_of_rx = random.randint(self.min_n_rx, MAX_N_RX)
-        # Sample `number_of_rx` integers. These are the Rx IDs to activate.
-        begin_rx_idx = torch.randint(self.n_dim, size=(number_of_rx,))
-        # Put the previously sampled combination in vector format
-        observation_combi = torch.zeros(self.n_dim + 1)
-        observation_combi[begin_rx_idx] = 1
-
-        self.current_state = observation_combi.float()
-        self._bind_state_to_dataset()
-        self.step_count = 0
-
-        return self.current_state
-
     def reset(self):
         idx = torch.randint(0, len(self.combis) + 1, size=(1,))[0]
         self.current_state = torch.zeros(self.n_dim + 1)
         self.current_state[: self.n_dim] = torch.tensor(self.combis[idx]).clone()
-        self.record_state(idx)
+        self.record_state(idx.item())
         self.step_count = 0
 
         return self.current_state
@@ -184,11 +170,10 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
         # Redefine observation space
         self.observation_space = gym.spaces.Dict(
             {
-                "action_mask": gym.spaces.MultiBinary(self.action_space.n),
+                "action_mask": gym.spaces.Box(0, 1, shape=(self.action_space.n,)),
                 "observations": self.observation_space,
             }
         )
-
         # Get combis as set to do quick membership lookups
         self.combis_set = map(tuple, tuple(self.combis.tolist()))
 
@@ -196,17 +181,23 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
         idx = torch.randint(0, len(self.combis) + 1, size=(1,))[0]
         self.current_state = torch.zeros(self.n_dim + 1)
         self.current_state[: self.n_dim] = self.combis[idx].clone()
-        self.record_state(idx)
+        self.record_state(idx.item())
         self.step_count = 0
 
         mask = get_action_mask(self.current_state, self.n_dim, self.combis)
         obs = {"action_mask": mask, "observations": self.current_state}
+        self.previous_mask_avail = np.where(mask == 1)[0]
 
         return obs
 
     def update_combis(self, new_combis):
         self.combis = new_combis
         self.combis_set = map(tuple, tuple(self.combis.tolist()))
+
+    def _find_current_state_idx(self):
+        # TODO Perhaps change this so it is more efficient rather than compute a L1 dist everytime... Closest will ALWAYS be 0 distance since this is a parametric action env
+        idx, _ = self._bind_state_to_dataset()
+        return idx
 
     def step(self, action):
         done_dict = self._is_done(action)
@@ -225,14 +216,15 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
         elif self.current_state.sum() < self.min_n_rx:
             reward = -self.step_penalty
         else:
-            knn_idx, same_state = self._bind_state_to_dataset()
+            idx = self._find_current_state_idx()
             reward_noise = torch.normal(self.mean_noise, self.std_noise)
-            reward = self.risks[knn_idx] + reward_noise - self.step_penalty
+            reward = self.risks[idx] + reward_noise - self.step_penalty
             reward = reward.item()
+
         self.step_count += 1
-        # print(self.current_states)
         mask = get_action_mask(self.current_state, self.n_dim, self.combis)
         obs = {"action_mask": mask, "observations": self.current_state}
+
         return obs, reward, done, done_dict
 
 
@@ -273,6 +265,16 @@ def load_dataset(dataset_name, path_to_dataset="datasets"):
 
 
 def get_action_mask(state, n_dim, combis):
+    """Creates a mask based on current state
+
+    Args:
+        state (torch.Tensor): current state
+        n_dim (int): number of dimensions for dataset (Number of actions, excluding "end" action)
+        combis (torch.Tensor): tensor containing all possible combinations currently available in dataset
+
+    Returns:
+        torch.Tensor: action mask for current state (additive mask)
+    """
     # Get rx part
     state = state[:n_dim]
 
@@ -284,7 +286,7 @@ def get_action_mask(state, n_dim, combis):
     available_actions_idx = torch.where((possible_next_states - state) != 0)[1]
 
     # Create mask
-    mask = torch.zeros(n_dim + 1).float()
+    mask = np.zeros((n_dim + 1,), dtype=np.float32)
     mask[available_actions_idx] = 1
     mask[-1] = 1  # Always let the agent play the "end" action
 
