@@ -170,7 +170,9 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
         # Redefine observation space
         self.observation_space = gym.spaces.Dict(
             {
-                "action_mask": gym.spaces.Box(0, 1, shape=(self.action_space.n,)),
+                "action_mask": gym.spaces.MultiBinary(
+                    self.action_space.n,
+                ),
                 "observations": self.observation_space,
             }
         )
@@ -184,8 +186,15 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
         self.record_state(idx.item())
         self.step_count = 0
 
-        mask = get_action_mask(self.current_state, self.n_dim, self.combis)
+        mask = get_action_mask(self.current_state, self.combis)
         obs = {"action_mask": mask, "observations": self.current_state}
+        self.previous_mask_avail = np.where(mask == 1)[0]
+
+        return obs
+
+    def reset_at_state_mask(self, state, mask):
+        self.current_state = state
+        obs = {"action_mask": mask, "observation": self.current_state}
         self.previous_mask_avail = np.where(mask == 1)[0]
 
         return obs
@@ -203,6 +212,8 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
         done_dict = self._is_done(action)
         done = done_dict["done"]
         reason = done_dict["reason"]
+
+        assert action in self.previous_mask_avail
 
         # Update state if action wasn't to end the episode
         if reason != "end_action_no_end":
@@ -222,8 +233,9 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
             reward = reward.item()
 
         self.step_count += 1
-        mask = get_action_mask(self.current_state, self.n_dim, self.combis)
+        mask = get_action_mask(self.current_state, self.combis)
         obs = {"action_mask": mask, "observations": self.current_state}
+        self.previous_mask_avail = np.where(mask == 1)[0]
 
         return obs, reward, done, done_dict
 
@@ -264,7 +276,7 @@ def load_dataset(dataset_name, path_to_dataset="datasets"):
     return combis, risks, pat_vecs, n_obs, n_dim
 
 
-def get_action_mask(state, n_dim, combis):
+def get_action_mask(state, combis):
     """Creates a mask based on current state
 
     Args:
@@ -276,14 +288,16 @@ def get_action_mask(state, n_dim, combis):
         torch.Tensor: action mask for current state (additive mask)
     """
     # Get rx part
-    state = state[:n_dim]
-
+    state = state[:-1]
+    n_dim = len(state)
     dists = torch.norm(state - combis, dim=1, p=1)
     possible_next_states_idx = torch.where(dists == 1)[0]
     possible_next_states = combis[possible_next_states_idx]
 
     # Dimension 0 contains next states, dimension 1 contains location of different bit (actions)
-    available_actions_idx = torch.where((possible_next_states - state) != 0)[1]
+    available_actions_idx = (
+        torch.where((possible_next_states - state) != 0)[1].cpu().numpy()
+    )
 
     # Create mask
     mask = np.zeros((n_dim + 1,), dtype=np.float32)

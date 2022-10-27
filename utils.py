@@ -10,6 +10,7 @@ from ray.rllib.policy import Policy
 from ray.rllib.policy.sample_batch import SampleBatch
 from ray.rllib.utils.typing import AgentID, PolicyID
 from ray.rllib.algorithms import ppo, dqn
+from ray.rllib.algorithms.dqn.dqn_torch_policy import compute_q_values
 from torch.utils.data import DataLoader, Dataset
 from torch.optim import Adam
 from torch.nn import MSELoss
@@ -78,7 +79,7 @@ def get_trainer(args, env_config, device):
                 "train_batch_size": args.trials,
                 "gamma": args.gamma,
                 "lr": args.lr,
-                "num_atoms": 51,  # Not detected ?
+                "num_atoms": 51,
                 "v_min": -1,
                 "v_max": 5,
                 "n_step": 5,
@@ -108,21 +109,17 @@ def make_deterministic(seed=42):
     random.seed(seed)
 
 
-def compute_jaccard(found_solution: set, true_solution: set):
-    n_in_inter = 0
+def compute_n_inter(found_solution: set, true_solution: set):
 
     intersection = found_solution & true_solution
 
     n_in_inter = len(intersection)
 
-    return (
-        n_in_inter / (len(found_solution) + len(true_solution) - n_in_inter),
-        n_in_inter,
-    )
+    return n_in_inter
 
 
 def compute_metrics(
-    net,
+    agent,
     combis,
     thresh,
     pat_vecs,
@@ -151,12 +148,12 @@ def compute_metrics(
     Returns:
         tuple: tuple of metrics and updated tensors in the following order:
         metrics_dict containing:
-            jaccard for current step,
-            ratio_app for current step,
+            recall for current step,
+            precision for current step,
             percent_found_pat for current step,
             n_inter for current step,
-            jaccard for all steps so far,
-            ratio_app for all steps so far,
+            recall for all steps so far,
+            precision for all steps so far,
             percent_found_pat for all steps so far,
             n_inter for all steps so far,
         updated all flagged combis,
@@ -165,14 +162,15 @@ def compute_metrics(
     if seen_idx != "all":
         seen_idx = torch.tensor(list(seen_idx))
         combis = combis[seen_idx]
+        masks = masks[seen_idx]
     else:
         seen_idx = torch.tensor(list(range(len(combis))))
 
     all_combis_estimated_reward = get_estimated_state_reward(
-        net, combis, step_penalty, env_name, gamma, masks, device
+        agent, combis, step_penalty, env_name, gamma, masks, device
     )
 
-    # Parmis tous les vecteurs "existant", lesquels je trouve ? (Jaccard, ratio_app)
+    # Parmis tous les vecteurs "existant", lesquels je trouve ? (recall, precision)
     sol_idx = set(
         seen_idx[torch.where(all_combis_estimated_reward > thresh)[0]].tolist()
     )
@@ -180,8 +178,15 @@ def compute_metrics(
     all_flagged_combis_idx.update(sol_idx)
 
     # Parmis les patrons dangereux (ground truth), combien j'en trouve tels quels
+    d1, d2 = pat_vecs.shape
     all_pats_estimated_reward = get_estimated_state_reward(
-        net, pat_vecs, step_penalty, env_name, gamma, 1, device
+        agent,
+        pat_vecs,
+        step_penalty,
+        env_name,
+        gamma,
+        torch.ones(d1, d2 + 1),
+        device,
     )
 
     sol_pat_idx = set(torch.where(all_pats_estimated_reward > thresh)[0].tolist())
@@ -189,13 +194,11 @@ def compute_metrics(
     all_flagged_pats_idx.update(sol_pat_idx)
 
     # À quel point ma solution trouvée parmis les vecteurs du dataset est similaire à la vraie solution
-    jaccard, n_inter = compute_jaccard(
-        sol_idx, true_sol_idx
-    )  # Jaccard for the current step
+    n_inter = compute_n_inter(sol_idx, true_sol_idx)  # recall for the current step
 
-    jaccard_all, n_inter_all = compute_jaccard(
+    n_inter_all = compute_n_inter(
         all_flagged_combis_idx, true_sol_idx
-    )  # Jaccard for all steps before + this one if we keep all previous solutions
+    )  # recall for all steps before + this one if we keep all previous solutions
 
     # Combien de patrons tels quels j'ai flag ?
     ratio_found_pat = len(sol_pat_idx) / len(pat_vecs)  # For this step
@@ -205,23 +208,27 @@ def compute_metrics(
 
     # A quel point ma solution trouvee parmis les vecteurs du dataset est dans la vraie solution
     if len(sol_idx) == 0:
-        ratio_app = float("nan")
+        recall = float("nan")
+        precision = float("nan")
     else:
-        ratio_app = n_inter / len(sol_idx)
+        recall = n_inter / len(true_sol_idx)
+        precision = n_inter / len(sol_idx)
 
     if len(all_flagged_combis_idx) == 0:
-        ratio_app_all = float("nan")
+        recall_all = float("nan")
+        precision_all = float("nan")
     else:
-        ratio_app_all = n_inter_all / len(all_flagged_combis_idx)
+        recall_all = n_inter_all / len(true_sol_idx)
+        precision_all = n_inter_all / len(all_flagged_combis_idx)
 
     metrics_dict = {}
 
-    metrics_dict["jaccard"] = jaccard
-    metrics_dict["ratio_app"] = ratio_app
+    metrics_dict["recall"] = recall
+    metrics_dict["precision"] = precision
     metrics_dict["ratio_found_pat"] = ratio_found_pat
     metrics_dict["n_inter"] = n_inter
-    metrics_dict["jaccard_all"] = jaccard_all
-    metrics_dict["ratio_app_all"] = ratio_app_all
+    metrics_dict["recall_all"] = recall_all
+    metrics_dict["precision_all"] = precision_all
     metrics_dict["ratio_found_pat_all"] = ratio_found_pat_all
     metrics_dict["n_inter_all"] = n_inter_all
 
@@ -233,7 +240,7 @@ def compute_metrics(
     )
 
 
-def get_estimated_state_reward(
+def get_estimated_state_reward_old(
     net, combis, step_penalty, env_name, gamma, masks, device
 ):
     """Compute estimates of state's reward for every combinations in `combis`
@@ -285,7 +292,9 @@ def get_estimated_state_reward(
     taken_actions = torch.argmax(logits, dim=1).unsqueeze(0)  # (100000, 1)
     next_states = combis_states.clone()
 
-    if env_name == "randomstart":
+    if "random" in env_name:
+        # If env has a random start, then actions are like switches
+        # hence the logical_not
         combi_bits = next_states.gather(1, taken_actions)
         combi_bits = torch.logical_not(combi_bits).float()
         next_states = next_states.scatter(1, taken_actions, combi_bits)
@@ -297,6 +306,100 @@ def get_estimated_state_reward(
     # Particular to RayNetwork taken from tutorial...
     if masks is not None:
         obs = {"obs": {"observations": next_states, "action_mask": 1}}
+    else:
+        obs = {"obs": next_states}
+
+    net(obs)
+    next_state_values = net.value_function()
+
+    estimated_reward = (state_values + step_penalty) - gamma * next_state_values
+    return estimated_reward
+
+
+def get_estimated_state_reward(
+    agent, combis, step_penalty, env_name, gamma, masks, device
+):
+    """Compute estimates of state's reward for every combinations in `combis`
+    Value function loss for PPO's critic:
+
+
+            rollout[Postprocessing.ADVANTAGES] = (
+                discounted_returns - rollout[SampleBatch.VF_PREDS]
+            )
+            train_batch[Postprocessing.VALUE_TARGETS] = rollout[Postprocessing.ADVANTAGES] + rollout[SampleBatch.VF_PREDS]
+
+            value_fn_out = model.value_function()
+            vf_loss = torch.pow(
+                value_fn_out - train_batch[Postprocessing.VALUE_TARGETS], 2.0
+            )
+            vf_loss_clipped = torch.clamp(vf_loss, 0, self.config["vf_clip_param"])
+            mean_vf_loss = reduce_mean_valid(vf_loss_clipped)
+
+
+
+    Args:
+        net ([type]): [description]
+        combis ([type]): [description]
+        step_penalty ([type]): [description]
+        env_name ([type]): [description]
+        gamma ([type]): [description]
+        device ([type]): [description]
+
+    Returns:
+        [type]: [description]
+    """
+    net = agent.get_policy().model
+    d1, d2 = combis.shape
+
+    # Expand combis to have the extra terminal state
+    combis_states = torch.zeros(d1, d2 + 1)
+    combis_states[:, :d2] = combis
+    combis_states = combis_states.to(device)
+
+    taken_actions = []
+    for i in range(d1 - 99000):
+        if masks is not None:
+            obs = {
+                "observations": combis_states[i],
+                "action_mask": masks[i],
+            }
+        else:
+            obs = {"obs": combis_states[i]}
+
+        action = agent.compute_single_action(obs).astype("int64")
+        taken_actions.append(action)
+    taken_actions = torch.tensor(taken_actions)[None]
+    next_states = combis_states.clone()
+
+    if masks is not None:
+        obs = {
+            "obs": {
+                "observations": combis_states,
+                "action_mask": masks,
+            }
+        }
+    else:
+        obs = {"obs": combis_states}
+
+    # Forward pass for state value
+    net(obs)
+    state_values = net.value_function()
+    if "random" in env_name:
+        # If env has a random start, then actions are like switches
+        # hence the logical_not
+        combi_bits = next_states.gather(1, taken_actions)
+        combi_bits = torch.logical_not(combi_bits).float()
+        next_states = next_states.scatter(1, taken_actions, combi_bits)
+    elif env_name == "singlestart":
+        # if env is single start, we can only set to one
+        next_states = next_states.scatter(1, taken_actions, 1)
+
+    # Forward pass needs to happen on policy before value is computed
+    # Particular to RayNetwork taken from tutorial...
+    if masks is not None:
+        obs = {
+            "obs": {"observations": next_states, "action_mask": torch.ones(d1, d2 + 1)}
+        }
     else:
         obs = {"obs": next_states}
 
@@ -415,12 +518,14 @@ def get_precomputed_action_mask(env_name, dataset_name, combis, device):
         else:
             print("No precomputed masks found. Computing them right now.")
             d1, d2 = combis.shape
-            masks = torch.zeros(d1, d2 + 1)
+            masks = np.zeros(d1, d2 + 1)
             combis_states = torch.zeros(d1, d2 + 1)
             combis_states[:, :d2] = combis
             combis_states = combis_states.to(device)
             for i in range(len(combis_states)):
-                masks[i] = get_action_mask(combis_states[i], d2, combis)
+                masks[i] = torch.from_numpy(
+                    get_action_mask(combis_states[i], d2, combis)
+                )
 
             torch.save(masks, f"datasets/masks/{dataset_name}.pth")
         return masks

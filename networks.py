@@ -305,9 +305,6 @@ class MaskableDQNTorchModel(DQNTorchModel, nn.Module):
                 action_scores, shape=(-1, self.action_space.n, self.num_atoms)
             )
 
-            # self.mask.repeat()
-            # Apply mask to 0-out unavailable actions
-            # support_logits_per_action = support_logits_per_action
             # Transforms logits to probs
             # So every atom is now a probability mass
             support_prob_per_action = nn.functional.softmax(
@@ -335,6 +332,13 @@ class MaskableDQNTorchModel(DQNTorchModel, nn.Module):
         # out = self.value_module(model_out)
         return out
 
+    def value_function(self):
+        x = self.get_state_value(self.embed)
+        z = torch.arange(0.0, self.num_atoms, dtype=torch.float32).to(x.device)
+        z = self.v_min + z * (self.v_max - self.v_min) / float(self.num_atoms - 1)
+        support_probs = nn.functional.softmax(x, dim=-1)
+        return torch.sum(z * support_probs, dim=-1)
+
     @override(ModelV2)
     def forward(self, input_dict, state, seq_lens):
         if isinstance(input_dict, SampleBatch):
@@ -352,6 +356,7 @@ class MaskableDQNTorchModel(DQNTorchModel, nn.Module):
         # Set observations as float because of possible MultiBinary
         # MultiBinary sets 0,1 as Char (int8)
         embed = self._hidden_layers(obs.float())
+        self.embed = embed
         return embed, []
 
 
