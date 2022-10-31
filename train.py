@@ -87,6 +87,7 @@ for i in range(args.iters):
             args.gamma,
             env_config["step_penalty"],
             torch.ones(d1, d2 + 1),
+            args.n_sigmas,
             device=device,
             seen_idx="all",
         )

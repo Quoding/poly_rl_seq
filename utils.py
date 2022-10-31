@@ -130,6 +130,7 @@ def compute_metrics(
     gamma,
     step_penalty,
     masks,
+    n_sigmas,
     device,
     seen_idx="all",
 ):
@@ -167,7 +168,7 @@ def compute_metrics(
         seen_idx = torch.tensor(list(range(len(combis))))
 
     all_combis_estimated_reward = get_estimated_state_reward(
-        agent, combis, step_penalty, env_name, gamma, masks, device
+        agent, combis, step_penalty, env_name, gamma, masks, n_sigmas, device
     )
 
     # Parmis tous les vecteurs "existant", lesquels je trouve ? (recall, precision)
@@ -186,6 +187,7 @@ def compute_metrics(
         env_name,
         gamma,
         torch.ones(d1, d2 + 1),
+        n_sigmas,
         device,
     )
 
@@ -241,9 +243,10 @@ def compute_metrics(
 
 
 def get_estimated_state_reward_old(
-    net, combis, step_penalty, env_name, gamma, masks, device
+    net, combis, step_penalty, env_name, gamma, masks, n_sigmas, device
 ):
-    """Compute estimates of state's reward for every combinations in `combis`
+    """DEPRECATED
+    Compute estimates of state's reward for every combinations in `combis`
     Value function loss for PPO's critic:
 
 
@@ -317,7 +320,7 @@ def get_estimated_state_reward_old(
 
 
 def get_estimated_state_reward(
-    agent, combis, step_penalty, env_name, gamma, masks, device
+    agent, combis, step_penalty, env_name, gamma, masks, n_sigmas, device
 ):
     """Compute estimates of state's reward for every combinations in `combis`
     Value function loss for PPO's critic:
@@ -343,6 +346,7 @@ def get_estimated_state_reward(
         step_penalty ([type]): [description]
         env_name ([type]): [description]
         gamma ([type]): [description]
+        n_sigmas ([type]): [description]
         device ([type]): [description]
 
     Returns:
@@ -357,7 +361,7 @@ def get_estimated_state_reward(
     combis_states = combis_states.to(device)
 
     taken_actions = []
-    for i in range(d1 - 99000):
+    for i in range(d1):
         if masks is not None:
             obs = {
                 "observations": combis_states[i],
@@ -383,7 +387,7 @@ def get_estimated_state_reward(
 
     # Forward pass for state value
     net(obs)
-    state_values = net.value_function()
+    state_values, std_s1 = net.value_function()
     if "random" in env_name:
         # If env has a random start, then actions are like switches
         # hence the logical_not
@@ -404,9 +408,12 @@ def get_estimated_state_reward(
         obs = {"obs": next_states}
 
     net(obs)
-    next_state_values = net.value_function()
+    next_state_values, std_s2 = net.value_function()
 
-    estimated_reward = (state_values + step_penalty) - gamma * next_state_values
+    # Gives a worst case estimated reward for the state
+    estimated_reward = (state_values - n_sigmas * std_s1 + step_penalty) - gamma * (
+        next_state_values + n_sigmas * std_s2
+    )
     return estimated_reward
 
 
@@ -496,6 +503,13 @@ def parse_args():
         type=float,
         default=0.01,
         help="Learning rate for gradient descent",
+    )
+
+    parser.add_argument(
+        "--n_sigmas",
+        type=int,
+        default=3,
+        help="Number of sigmas to consider for confidence interval",
     )
 
     parser.add_argument(

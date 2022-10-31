@@ -337,7 +337,12 @@ class MaskableDQNTorchModel(DQNTorchModel, nn.Module):
         z = torch.arange(0.0, self.num_atoms, dtype=torch.float32).to(x.device)
         z = self.v_min + z * (self.v_max - self.v_min) / float(self.num_atoms - 1)
         support_probs = nn.functional.softmax(x, dim=-1)
-        return torch.sum(z * support_probs, dim=-1)
+
+        mu = torch.sum(z * support_probs, dim=-1)
+
+        std = (((mu[:, None] - z) ** 2) * support_probs).sum(dim=-1)
+
+        return mu, std
 
     @override(ModelV2)
     def forward(self, input_dict, state, seq_lens):
