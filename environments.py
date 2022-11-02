@@ -188,14 +188,14 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
 
         mask = get_action_mask(self.current_state, self.combis)
         obs = {"action_mask": mask, "observations": self.current_state}
-        self.previous_mask_avail = np.where(mask == 1)[0]
+        # self.previous_mask_avail = np.where(mask == 1)[0]
 
         return obs
 
     def reset_at_state_mask(self, state, mask):
         self.current_state = state
         obs = {"action_mask": mask, "observation": self.current_state}
-        self.previous_mask_avail = np.where(mask == 1)[0]
+        # self.previous_mask_avail = np.where(mask == 1)[0]
 
         return obs
 
@@ -213,7 +213,7 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
         done = done_dict["done"]
         reason = done_dict["reason"]
 
-        assert action in self.previous_mask_avail
+        # assert action in self.previous_mask_avail
 
         # Update state if action wasn't to end the episode
         if reason != "end_action_no_end":
@@ -234,8 +234,8 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
 
         self.step_count += 1
         mask = get_action_mask(self.current_state, self.combis)
-        obs = {"action_mask": mask, "observations": self.current_state}
-        self.previous_mask_avail = np.where(mask == 1)[0]
+        obs = {"action_mask": mask, "observations": self.current_state.cpu().numpy()}
+        # self.previous_mask_avail = np.where(mask == 1)[0]
 
         return obs, reward, done, done_dict
 

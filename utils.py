@@ -22,6 +22,7 @@ from networks import (
     MaskableDQNTorchModel,
     CUSTOM_MODEL_CONFIG,
 )
+import numpy as np
 
 # trainer_names_map = {"ppo": ppo.PPOTrainer, "dqn": }
 
@@ -66,7 +67,7 @@ def get_trainer(args, env_config, device):
             config={
                 "framework": "torch",
                 "env_config": env_config,
-                "num_workers": 1,
+                # "num_workers": 1,
                 "num_gpus": 1 if device == torch.device("cuda") else 0,
                 "model": {
                     "custom_model": "dqn_custom_net",
@@ -79,7 +80,7 @@ def get_trainer(args, env_config, device):
                 "train_batch_size": args.trials,
                 "gamma": args.gamma,
                 "lr": args.lr,
-                "num_atoms": 51,
+                "num_atoms": 10,
                 "v_min": -1,
                 "v_max": 5,
                 "n_step": 5,
@@ -165,12 +166,12 @@ def compute_metrics(
         combis = combis[seen_idx]
         masks = masks[seen_idx]
     else:
-        seen_idx = torch.tensor(list(range(len(combis))))
+        seen_idx = torch.tensor(list(range(len(combis)))).to(device)
 
     all_combis_estimated_reward = get_estimated_state_reward(
         agent, combis, step_penalty, env_name, gamma, masks, n_sigmas, device
     )
-
+    all_combis_estimated_reward = all_combis_estimated_reward.cpu()
     # Parmis tous les vecteurs "existant", lesquels je trouve ? (recall, precision)
     sol_idx = set(
         seen_idx[torch.where(all_combis_estimated_reward > thresh)[0]].tolist()
@@ -242,102 +243,11 @@ def compute_metrics(
     )
 
 
-def get_estimated_state_reward_old(
-    net, combis, step_penalty, env_name, gamma, masks, n_sigmas, device
-):
-    """DEPRECATED
-    Compute estimates of state's reward for every combinations in `combis`
-    Value function loss for PPO's critic:
-
-
-            rollout[Postprocessing.ADVANTAGES] = (
-                discounted_returns - rollout[SampleBatch.VF_PREDS]
-            )
-            train_batch[Postprocessing.VALUE_TARGETS] = rollout[Postprocessing.ADVANTAGES] + rollout[SampleBatch.VF_PREDS]
-
-            value_fn_out = model.value_function()
-            vf_loss = torch.pow(
-                value_fn_out - train_batch[Postprocessing.VALUE_TARGETS], 2.0
-            )
-            vf_loss_clipped = torch.clamp(vf_loss, 0, self.config["vf_clip_param"])
-            mean_vf_loss = reduce_mean_valid(vf_loss_clipped)
-
-
-
-    Args:
-        net ([type]): [description]
-        combis ([type]): [description]
-        step_penalty ([type]): [description]
-        env_name ([type]): [description]
-        gamma ([type]): [description]
-        device ([type]): [description]
-
-    Returns:
-        [type]: [description]
-    """
-    d1, d2 = combis.shape
-    # Expand combis to have the extra terminal state
-    combis_states = torch.zeros(d1, d2 + 1)
-    combis_states[:, :d2] = combis
-    combis_states = combis_states.to(device)
-
-    if masks is not None:
-        obs = {"obs": {"observations": combis_states, "action_mask": masks}}
-    else:
-        obs = {"obs": combis_states}
-
-    # Forward pass for state value
-    logits, _ = net(obs)
-    state_values = net.value_function()
-    # state_values = trainer..value_function()  # (100000, 51)
-
-    # Get next states and get their value to extract estimated reward
-    taken_actions = torch.argmax(logits, dim=1).unsqueeze(0)  # (100000, 1)
-    next_states = combis_states.clone()
-
-    if "random" in env_name:
-        # If env has a random start, then actions are like switches
-        # hence the logical_not
-        combi_bits = next_states.gather(1, taken_actions)
-        combi_bits = torch.logical_not(combi_bits).float()
-        next_states = next_states.scatter(1, taken_actions, combi_bits)
-    elif env_name == "singlestart":
-        # if env is single start, we can only set to one
-        next_states = next_states.scatter(1, taken_actions, 1)
-
-    # Forward pass needs to happen on policy before value is computed
-    # Particular to RayNetwork taken from tutorial...
-    if masks is not None:
-        obs = {"obs": {"observations": next_states, "action_mask": 1}}
-    else:
-        obs = {"obs": next_states}
-
-    net(obs)
-    next_state_values = net.value_function()
-
-    estimated_reward = (state_values + step_penalty) - gamma * next_state_values
-    return estimated_reward
-
-
 def get_estimated_state_reward(
     agent, combis, step_penalty, env_name, gamma, masks, n_sigmas, device
 ):
     """Compute estimates of state's reward for every combinations in `combis`
     Value function loss for PPO's critic:
-
-
-            rollout[Postprocessing.ADVANTAGES] = (
-                discounted_returns - rollout[SampleBatch.VF_PREDS]
-            )
-            train_batch[Postprocessing.VALUE_TARGETS] = rollout[Postprocessing.ADVANTAGES] + rollout[SampleBatch.VF_PREDS]
-
-            value_fn_out = model.value_function()
-            vf_loss = torch.pow(
-                value_fn_out - train_batch[Postprocessing.VALUE_TARGETS], 2.0
-            )
-            vf_loss_clipped = torch.clamp(vf_loss, 0, self.config["vf_clip_param"])
-            mean_vf_loss = reduce_mean_valid(vf_loss_clipped)
-
 
 
     Args:
@@ -358,8 +268,8 @@ def get_estimated_state_reward(
     # Expand combis to have the extra terminal state
     combis_states = torch.zeros(d1, d2 + 1)
     combis_states[:, :d2] = combis
-    combis_states = combis_states.to(device)
-
+    # combis_states = combis_states.to(device)
+    # masks = masks.cpu().numpy() if type(masks) == torch.Tensor else masks
     taken_actions = []
     for i in range(d1):
         if masks is not None:
@@ -372,7 +282,8 @@ def get_estimated_state_reward(
 
         action = agent.compute_single_action(obs).astype("int64")
         taken_actions.append(action)
-    taken_actions = torch.tensor(taken_actions)[None]
+    taken_actions = torch.tensor(taken_actions)[None].to(device)
+    combis_states = combis_states.to(device)
     next_states = combis_states.clone()
 
     if masks is not None:
@@ -402,7 +313,10 @@ def get_estimated_state_reward(
     # Particular to RayNetwork taken from tutorial...
     if masks is not None:
         obs = {
-            "obs": {"observations": next_states, "action_mask": torch.ones(d1, d2 + 1)}
+            "obs": {
+                "observations": next_states,
+                "action_mask": torch.ones(d1, d2 + 1).to(device),
+            }
         }
     else:
         obs = {"obs": next_states}
@@ -532,15 +446,14 @@ def get_precomputed_action_mask(env_name, dataset_name, combis, device):
         else:
             print("No precomputed masks found. Computing them right now.")
             d1, d2 = combis.shape
-            masks = np.zeros(d1, d2 + 1)
+            masks = torch.zeros(d1, d2 + 1)
             combis_states = torch.zeros(d1, d2 + 1)
             combis_states[:, :d2] = combis
             combis_states = combis_states.to(device)
             for i in range(len(combis_states)):
-                masks[i] = torch.from_numpy(
-                    get_action_mask(combis_states[i], d2, combis)
-                )
+                masks[i] = torch.from_numpy(get_action_mask(combis_states[i], combis))
 
+            masks = masks.cpu().numpy()
             torch.save(masks, f"datasets/masks/{dataset_name}.pth")
         return masks
     return None
