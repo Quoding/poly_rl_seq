@@ -234,7 +234,7 @@ class MaskableDQNTorchModel(DQNTorchModel, nn.Module):
         custom_model_config = model_config.get("custom_model_config")
         self.n_actions = action_space.n
 
-        hiddens = list(model_config.get("fcnet_hiddens", []))
+        hiddens = list(model_config.get("fcnet_hiddens", [128]))
         activation = model_config.get("fcnet_activation")
         orig_space = getattr(obs_space, "original_space", obs_space)
         prev_layer_size = int(np.prod(orig_space["observations"].n))
@@ -251,10 +251,6 @@ class MaskableDQNTorchModel(DQNTorchModel, nn.Module):
                 )
             )
             prev_layer_size = size
-        # if use_bn:
-        #     layers.append(nn.BatchNorm1d(prev_layer_size))
-        # if dropout_rate > 0:
-        #     layers.append(nn.Dropout(p=dropout_rate))
 
         self._hidden_layers = nn.Sequential(*layers)
 
@@ -363,8 +359,3 @@ class MaskableDQNTorchModel(DQNTorchModel, nn.Module):
         embed = self._hidden_layers(obs.float())
         self.embed = embed
         return embed, []
-
-
-# class MaskedEpsilonGreedy(EpsilonGreedy):
-#     def __init__(self):
-#         pass

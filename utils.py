@@ -67,11 +67,10 @@ def get_trainer(args, env_config, device):
             config={
                 "framework": "torch",
                 "env_config": env_config,
-                # "num_workers": 1,
+                "num_workers": 2,
                 "num_gpus": 1 if device == torch.device("cuda") else 0,
                 "model": {
                     "custom_model": "dqn_custom_net",
-                    # "fcnet_hiddens": [],
                     "fcnet_hiddens": [args.width] * args.layers,
                     "fcnet_activation": "relu",
                 },

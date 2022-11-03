@@ -87,7 +87,6 @@ for i in range(args.iters):
             device=device,
             seen_idx="all",
         )
-        print(estimates)
         # Note that metrics are computed w.r.t. "seen_idx states" (can be all, or just observed states)
         recalls.append(metrics_dict["recall"])
         precisions.append(metrics_dict["precision"])
