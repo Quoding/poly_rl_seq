@@ -42,7 +42,7 @@ def get_trainer(args, env_config, device):
             config={
                 "framework": "torch",
                 "env_config": env_config,
-                # "num_workers": 0,
+                "num_workers": 2,
                 "num_gpus": 1 if device == torch.device("cuda") else 0,
                 "model": {
                     "custom_model": "ppo_custom_net",
@@ -89,6 +89,15 @@ def get_trainer(args, env_config, device):
                 "sigma0": 0.5,
                 "hiddens": [args.width],
                 "disable_env_checking": True,
+                # "exploration_config": {
+                #     # The Exploration class to use. In the simplest case, this is the name
+                #     # (str) of any class present in the `rllib.utils.exploration` package.
+                #     # You can also provide the python class directly or the full location
+                #     # of your class (e.g. "ray.rllib.utils.exploration.epsilon_greedy.
+                #     # EpsilonGreedy").
+                #     "type": "StochasticSampling",
+                #     # Add constructor kwargs here (if any).
+                # },
             },
         )
 
@@ -380,7 +389,7 @@ def parse_args():
         "-o",
         "--output",
         type=str,
-        default="metrics/ouput/",
+        default="metrics/output",
         help="Output directory for metrics and agents",
     )
     parser.add_argument(
@@ -424,7 +433,12 @@ def parse_args():
         default=3,
         help="Number of sigmas to consider for confidence interval",
     )
-
+    parser.add_argument(
+        "--eval_step",
+        type=int,
+        default=200,
+        help="Evaluate agent every `eval_step` steps",
+    )
     parser.add_argument(
         "--agent",
         type=str,

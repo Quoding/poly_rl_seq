@@ -342,6 +342,7 @@ class MaskableDQNTorchModel(DQNTorchModel, nn.Module):
 
     @override(ModelV2)
     def forward(self, input_dict, state, seq_lens):
+        """We must redefine this with a custom model since we have to handle mask here. Default ModelV2 of the default DQNTorchModel would handle the forward, but wouldn't register the mask."""
         if isinstance(input_dict, SampleBatch):
             is_training = bool(input_dict.is_training)
         else:

@@ -59,63 +59,66 @@ logging.info(f"There are {n_combis_in_sol} combinations in the solution set")
 
 ### SET UP NETWORK AND TRAINER ###
 trainer = get_trainer(args, env_config, device)
+
 ### TRAINING LOOP ###
 for i in range(args.iters):
     print(i)
-    results = trainer.train()  # Get `train_batch_size` observations and learn on them
-    with torch.no_grad():
-        trainer.get_policy().config["explore"] = False
-        # Evaluate custom metrics
-        (
-            metrics_dict,
-            all_flagged_combis_idx,
-            all_flagged_pats_idx,
-            estimates,
-        ) = compute_metrics(
-            trainer,
-            combis,
-            args.threshold,
-            pat_vecs,
-            true_sol_idx,
-            all_flagged_combis_idx,
-            all_flagged_pats_idx,
-            env_config["env_name"],
-            args.gamma,
-            env_config["step_penalty"],
-            torch.ones(d1, d2 + 1),
-            args.n_sigmas,
-            device=device,
-            seen_idx="all",
-        )
-        # Note that metrics are computed w.r.t. "seen_idx states" (can be all, or just observed states)
-        recalls.append(metrics_dict["recall"])
-        precisions.append(metrics_dict["precision"])
-        ratio_found_pats.append(metrics_dict["ratio_found_pat"])
-        recalls_alls.append(metrics_dict["recall_all"])
-        precisions_alls.append(metrics_dict["precision_all"])
-        ratio_found_pats_alls.append(metrics_dict["ratio_found_pat_all"])
-        n_inter_alls.append(metrics_dict["n_inter_all"])
+    # Get `train_batch_size / args.trials` observations and learn on them
+    results = trainer.train()
 
-        logging.info(
-            f"trial: {i + 1}, recall: {recalls[-1]}, precision: {precisions[-1]}, ratio of patterns found: {ratio_found_pats[-1]}, n_inter: {metrics_dict['n_inter']}"
-        )
-        logging.info(
-            f"recall all: {recalls_alls[-1]}, precision all: {precisions_alls[-1]}, ratio of patterns found all: {ratio_found_pats_alls[-1]}, n_inter all: {n_inter_alls[-1]}"
-        )
+    if (i * args.trials) % args.eval_step == 0:
+        with torch.no_grad():
+            trainer.get_policy().config["explore"] = False
+            # Evaluate custom metrics
+            (
+                metrics_dict,
+                all_flagged_combis_idx,
+                all_flagged_pats_idx,
+                estimates,
+            ) = compute_metrics(
+                trainer,
+                combis,
+                args.threshold,
+                pat_vecs,
+                true_sol_idx,
+                all_flagged_combis_idx,
+                all_flagged_pats_idx,
+                env_config["env_name"],
+                args.gamma,
+                env_config["step_penalty"],
+                torch.ones(d1, d2 + 1),
+                args.n_sigmas,
+                device=device,
+                seen_idx="all",
+            )
+            # Note that metrics are computed w.r.t. "seen_idx states" (can be all, or just observed states)
+            recalls.append(metrics_dict["recall"])
+            precisions.append(metrics_dict["precision"])
+            ratio_found_pats.append(metrics_dict["ratio_found_pat"])
+            recalls_alls.append(metrics_dict["recall_all"])
+            precisions_alls.append(metrics_dict["precision_all"])
+            ratio_found_pats_alls.append(metrics_dict["ratio_found_pat_all"])
+            n_inter_alls.append(metrics_dict["n_inter_all"])
 
-        # Record observed states to avoid scouring combinatorial space later
-        all_observed_states_idx = [
-            ray.get(worker.foreach_env.remote(get_obs_fn))
-            for worker in trainer.workers.remote_workers()
-        ]
+            logging.info(
+                f"trial: {i + 1}, recall: {recalls[-1]}, precision: {precisions[-1]}, ratio of patterns found: {ratio_found_pats[-1]}, n_inter: {metrics_dict['n_inter']}"
+            )
+            logging.info(
+                f"recall all: {recalls_alls[-1]}, precision all: {precisions_alls[-1]}, ratio of patterns found all: {ratio_found_pats_alls[-1]}, n_inter all: {n_inter_alls[-1]}"
+            )
 
-        print(all_observed_states_idx)
-        # Unpack dimensions (1st dim is workers, 2nd is envs, 3rd are observations)
-        all_observed_states_idx = list(chain(*chain(*all_observed_states_idx)))
-        logging.info(
-            f"Number of unique states seen: {len(set(all_observed_states_idx))}"
-        )
-        trainer.get_policy().config["explore"] = True
+            # Record observed states to avoid scouring combinatorial space later
+            all_observed_states_idx = [
+                ray.get(worker.foreach_env.remote(get_obs_fn))
+                for worker in trainer.workers.remote_workers()
+            ]
+
+            # Unpack dimensions (1st dim is workers, 2nd is envs, 3rd are observations)
+            all_observed_states_idx = list(chain(*chain(*all_observed_states_idx)))
+            logging.info(
+                f"Number of unique states seen: {len(set(all_observed_states_idx))}"
+            )
+            trainer.get_policy().config["explore"] = True
 
 # Save metrics on disk
 l = [
@@ -143,8 +146,6 @@ except IndexError as e:
 for item in l:
     os.makedirs(f"{args.output}/{item}/", exist_ok=True)
 
-# torch.save(agent, f"{args.output}/agents/{args.seed}.pth")
-trainer.save(f"{args.output}/agents/{args.seed}/")
 torch.save(recalls, f"{args.output}/recalls/{args.seed}.pth")
 torch.save(precisions, f"{args.output}/precisions/{args.seed}.pth")
 torch.save(ratio_found_pats, f"{args.output}/ratio_found_pats/{args.seed}.pth")
@@ -163,3 +164,7 @@ torch.save(
 torch.save(
     all_observed_states_idx, f"{args.output}/all_observed_states_idx/{args.seed}.pth"
 )
+trainer.save(f"{args.output}/agents/{args.seed}/")
+
+
+# https://github.com/ray-project/ray/issues/6102
