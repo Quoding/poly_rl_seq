@@ -50,7 +50,7 @@ class PolypharmacyEnv(gym.Env):
         self.all_observed_states_idx = []
 
     def reset(self):
-        idx = torch.randint(0, len(self.combis) + 1, size=(1,))[0]
+        idx = torch.randint(0, len(self.combis), size=(1,))[0]
         self.current_state = torch.zeros(self.n_dim + 1)
         self.current_state[: self.n_dim] = torch.tensor(self.combis[idx]).clone()
         self.record_state(idx.item())
