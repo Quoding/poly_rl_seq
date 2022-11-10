@@ -1,20 +1,18 @@
-import copy
+from typing import Sequence
 
 import gym
 import numpy as np
 import torch
-import torch.nn as nn
-from ray.rllib.models.modelv2 import ModelV2
-from ray.rllib.models.torch.misc import AppendBiasLayer, SlimFC, normc_initializer
-from ray.rllib.models.torch.modules.noisy_layer import NoisyLayer
-from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
+from gym.spaces import MultiDiscrete
 from ray.rllib.algorithms.dqn.dqn_torch_model import DQNTorchModel
-from ray.rllib.utils.annotations import override
-from ray.rllib.utils.typing import ModelConfigDict
+from ray.rllib.models.modelv2 import ModelV2
+from ray.rllib.models.torch.misc import SlimFC, normc_initializer
+from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.rllib.policy.sample_batch import SampleBatch
-from typing import Sequence
-from ray.rllib.utils.torch_utils import FLOAT_MIN, FLOAT_MAX
-from gym.spaces import MultiDiscrete, MultiBinary
+from ray.rllib.utils.annotations import override
+from ray.rllib.utils.torch_utils import FLOAT_MAX, FLOAT_MIN
+from ray.rllib.utils.typing import ModelConfigDict
+from torch import nn
 
 CUSTOM_MODEL_CONFIG = {"bn": False, "dropout": 0, "use_masking": True}
 
@@ -135,42 +133,42 @@ class RayNetwork(TorchModelV2, nn.Module):
                 m.eval()
 
 
-class PreDistRayNetwork(RayNetwork):
-    def __init__(
-        self,
-        obs_space: gym.spaces.Space,
-        action_space: gym.spaces.Space,
-        num_outputs: int,
-        model_config: ModelConfigDict,
-        name: str,
-        **kwargs,
-    ):
+# class PreDistRayNetwork(RayNetwork):
+#     def __init__(
+#         self,
+#         obs_space: gym.spaces.Space,
+#         action_space: gym.spaces.Space,
+#         num_outputs: int,
+#         model_config: ModelConfigDict,
+#         name: str,
+#         **kwargs,
+#     ):
 
-        RayNetwork.__init__(
-            self, obs_space, action_space, num_outputs, model_config, name, **kwargs
-        )
+#         RayNetwork.__init__(
+#             self, obs_space, action_space, num_outputs, model_config, name, **kwargs
+#         )
 
-    @override(ModelV2)
-    def forward(self, input_dict, state, seq_lens):
-        if isinstance(input_dict, SampleBatch):
-            is_training = bool(input_dict.is_training)
-        else:
-            is_training = bool(input_dict.get("is_training", False))
+#     @override(ModelV2)
+#     def forward(self, input_dict, state, seq_lens):
+#         if isinstance(input_dict, SampleBatch):
+#             is_training = bool(input_dict.is_training)
+#         else:
+#             is_training = bool(input_dict.get("is_training", False))
 
-        if self.use_masking:
-            mask = input_dict["obs"]["action_mask"]
-            obs = input_dict["obs"]["observations"]
-        else:
-            obs = input_dict["obs"]
-            mask = 1
+#         if self.use_masking:
+#             mask = input_dict["obs"]["action_mask"]
+#             obs = input_dict["obs"]["observations"]
+#         else:
+#             obs = input_dict["obs"]
+#             mask = 1
 
-        # Set observations as float because of possible MultiBinary
-        # MultiBinary sets 0,1 as Char (int8)
-        self._hidden_out = self._hidden_layers(obs.float())
-        logits = self._logits(self._hidden_out)
-        ret = {"logits": logits, "mask": mask}
+#         # Set observations as float because of possible MultiBinary
+#         # MultiBinary sets 0,1 as Char (int8)
+#         self._hidden_out = self._hidden_layers(obs.float())
+#         logits = self._logits(self._hidden_out)
+#         ret = {"logits": logits, "mask": mask}
 
-        return logits, []
+#         return logits, []
 
 
 class MaskableDQNTorchModel(DQNTorchModel, nn.Module):

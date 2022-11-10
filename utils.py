@@ -1,33 +1,21 @@
 import argparse
+import random
 from os.path import exists
-from typing import Any, Dict, Tuple
 
-import torch
-from ray.rllib.env import BaseEnv
-from ray.rllib.evaluation import Episode, RolloutWorker
-from ray.rllib.models import ModelCatalog
-from ray.rllib.policy import Policy
-from ray.rllib.policy.sample_batch import SampleBatch
-from ray.rllib.utils.typing import AgentID, PolicyID
-from ray.rllib.algorithms import ppo, dqn
-from ray.rllib.algorithms.dqn.dqn_torch_policy import compute_q_values
-from torch.utils.data import DataLoader, Dataset
-from torch.optim import Adam
-from torch.nn import MSELoss
-from ray.tune.registry import register_env
-from environments import env_creator, get_action_mask
-from networks import (
-    RayNetwork,
-    PreDistRayNetwork,
-    MaskableDQNTorchModel,
-    CUSTOM_MODEL_CONFIG,
-)
 import numpy as np
+import torch
+from ray.rllib.algorithms import dqn, ppo
+from ray.rllib.models import ModelCatalog
+from ray.tune.registry import register_env
+
+from environments import env_creator, get_action_mask
+from networks import CUSTOM_MODEL_CONFIG, MaskableDQNTorchModel, RayNetwork
 
 # trainer_names_map = {"ppo": ppo.PPOTrainer, "dqn": }
 
 
 def get_trainer(args, env_config, device):
+    NUM_WORKERS = 2
     register_env("polyenv", env_creator)
 
     model_config = CUSTOM_MODEL_CONFIG
@@ -42,7 +30,7 @@ def get_trainer(args, env_config, device):
             config={
                 "framework": "torch",
                 "env_config": env_config,
-                "num_workers": 2,
+                "num_workers": NUM_WORKERS,
                 "num_gpus": 1 if device == torch.device("cuda") else 0,
                 "model": {
                     "custom_model": "ppo_custom_net",
@@ -53,6 +41,7 @@ def get_trainer(args, env_config, device):
                 "seed": args.seed,
                 "horizon": env_config["horizon"],
                 "train_batch_size": args.trials,
+                "rollout_fragment_length": args.trials * NUM_WORKERS,
                 "gamma": args.gamma,
                 "sgd_minibatch_size": args.batchsize,
                 "num_sgd_iter": args.epochs,
@@ -67,7 +56,7 @@ def get_trainer(args, env_config, device):
             config={
                 "framework": "torch",
                 "env_config": env_config,
-                "num_workers": 2,
+                "num_workers": NUM_WORKERS,
                 "num_gpus": 1 if device == torch.device("cuda") else 0,
                 "model": {
                     "custom_model": "dqn_custom_net",
@@ -77,6 +66,7 @@ def get_trainer(args, env_config, device):
                 "seed": args.seed,
                 "horizon": env_config["horizon"],
                 "train_batch_size": args.trials,
+                "rollout_fragment_length": args.trials * NUM_WORKERS,
                 "gamma": args.gamma,
                 "lr": args.lr,
                 "num_atoms": 10,

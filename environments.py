@@ -1,9 +1,9 @@
+import json
+
 import gym
-import torch
-import random
 import numpy as np
 import pandas as pd
-import json
+import torch
 
 # Value from literature
 MAX_N_RX = 15
