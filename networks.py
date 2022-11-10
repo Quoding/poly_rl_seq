@@ -356,9 +356,6 @@ class MaskableDQNTorchModel(DQNTorchModel, nn.Module):
 
         mask = input_dict["obs"]["action_mask"]
         self.mask = torch.clamp(torch.log(mask), FLOAT_MIN, FLOAT_MAX)
-        # self.inf_mask_logits = self.inf_mask_scores[None].reshape(
-        #     len(mask), self.n_actions, 1
-        # )
 
         obs = input_dict["obs"]["observations"]
         # Set observations as float because of possible MultiBinary
