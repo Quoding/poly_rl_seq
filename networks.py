@@ -14,6 +14,7 @@ from ray.rllib.utils.typing import ModelConfigDict
 from ray.rllib.policy.sample_batch import SampleBatch
 from typing import Sequence
 from ray.rllib.utils.torch_utils import FLOAT_MIN, FLOAT_MAX
+from gym.spaces import MultiDiscrete, MultiBinary
 
 CUSTOM_MODEL_CONFIG = {"bn": False, "dropout": 0, "use_masking": True}
 
@@ -232,12 +233,17 @@ class MaskableDQNTorchModel(DQNTorchModel, nn.Module):
         )
 
         custom_model_config = model_config.get("custom_model_config")
-        self.n_actions = action_space.n
-
+        orig_space = getattr(obs_space, "original_space", obs_space)
         hiddens = list(model_config.get("fcnet_hiddens", [128]))
         activation = model_config.get("fcnet_activation")
-        orig_space = getattr(obs_space, "original_space", obs_space)
-        prev_layer_size = int(np.prod(orig_space["observations"].n))
+
+        self.n_actions = action_space.n
+        if isinstance(orig_space["observations"], MultiDiscrete):
+            self.dim_obs = len(orig_space["observations"].nvec)
+        else:
+            self.dim_obs = orig_space["observations"].n
+
+        prev_layer_size = int(np.prod(self.dim_obs))
 
         layers = []
         # Create layers 0 to second-last.
