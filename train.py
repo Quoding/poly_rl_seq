@@ -54,13 +54,51 @@ logging.info(f"There are {n_combis_in_sol} combinations in the solution set")
 ### SET UP NETWORK AND TRAINER ###
 trainer = get_trainer(args, env_config, device)
 
+### EVALUATE BEFORE TRAINING ###
+logging.info("Evaluating metrics before training")
+# with torch.no_grad():
+#     trainer.get_policy().config["explore"] = False
+#     # Evaluate custom metrics
+#     (
+#         metrics_dict,
+#         all_flagged_combis_idx,
+#         all_flagged_pats_idx,
+#         estimates,
+#     ) = compute_metrics(
+#         trainer,
+#         combis,
+#         args.threshold,
+#         pat_vecs,
+#         true_sol_idx,
+#         all_flagged_combis_idx,
+#         all_flagged_pats_idx,
+#         env_config["env_name"],
+#         args.gamma,
+#         env_config["step_penalty"],
+#         torch.ones(d1, d2 + 1),
+#         args.n_sigmas,
+#         device=device,
+#         seen_idx="all",
+#     )
+#     # Note that metrics are computed w.r.t. "seen_idx states" (can be all, or just observed states)
+#     recalls.append(metrics_dict["recall"])
+#     precisions.append(metrics_dict["precision"])
+#     ratio_found_pats.append(metrics_dict["ratio_found_pat"])
+#     recalls_alls.append(metrics_dict["recall_all"])
+#     precisions_alls.append(metrics_dict["precision_all"])
+#     ratio_found_pats_alls.append(metrics_dict["ratio_found_pat_all"])
+#     n_inter_alls.append(metrics_dict["n_inter_all"])
+#     trainer.get_policy().config["explore"] = True
+
+logging.info("Starting training")
+
 ### TRAINING LOOP ###
 for i in range(args.iters):
     print(i)
-    # Get `train_batch_size / args.trials` observations and learn on them
+    # Get `train_batch_size = args.trials` observations and learn on them
     results = trainer.train()
 
-    if (i * args.trials) % args.eval_step == 0:
+    if ((i + 1) * args.trials) % args.eval_step == 0:
         with torch.no_grad():
             trainer.get_policy().config["explore"] = False
             # Evaluate custom metrics

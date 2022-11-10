@@ -15,7 +15,9 @@ from networks import CUSTOM_MODEL_CONFIG, MaskableDQNTorchModel, RayNetwork
 
 
 def get_trainer(args, env_config, device):
-    NUM_WORKERS = 2
+    NUM_WORKERS = 0
+
+    rollout_length = args.trials / NUM_WORKERS if NUM_WORKERS != 0 else args.trials
     register_env("polyenv", env_creator)
 
     model_config = CUSTOM_MODEL_CONFIG
@@ -41,7 +43,7 @@ def get_trainer(args, env_config, device):
                 "seed": args.seed,
                 "horizon": env_config["horizon"],
                 "train_batch_size": args.trials,
-                "rollout_fragment_length": args.trials * NUM_WORKERS,
+                "rollout_fragment_length": rollout_length,
                 "gamma": args.gamma,
                 "sgd_minibatch_size": args.batchsize,
                 "num_sgd_iter": args.epochs,
@@ -50,6 +52,25 @@ def get_trainer(args, env_config, device):
         )
     elif args.agent == "rainbow":
         ModelCatalog.register_custom_model("dqn_custom_net", MaskableDQNTorchModel)
+
+        replay_buffer_config = {
+            # Specify prioritized replay by supplying a buffer type that supports
+            # prioritization, for example: MultiAgentPrioritizedReplayBuffer.
+            "type": "MultiAgentPrioritizedReplayBuffer",
+            # Size of the replay buffer. Note that if async_updates is set,
+            # then each worker will have a replay buffer of this size.
+            "capacity": 50000,
+            "prioritized_replay_alpha": 0.6,
+            # Beta parameter for sampling from prioritized replay buffer.
+            "prioritized_replay_beta": 0.4,
+            # Epsilon to add to the TD errors when updating priorities.
+            "prioritized_replay_eps": 1e-6,
+            # The number of continuous environment steps to replay at once. This may
+            # be set to greater than 1 to support recurrent models.
+            "replay_sequence_length": 1,
+            # Whether to compute priorities on workers.
+            "worker_side_prioritization": False,
+        }
 
         trainer = dqn.DQN(
             env="polyenv",
@@ -66,10 +87,10 @@ def get_trainer(args, env_config, device):
                 "seed": args.seed,
                 "horizon": env_config["horizon"],
                 "train_batch_size": args.trials,
-                "rollout_fragment_length": args.trials * NUM_WORKERS,
+                "rollout_fragment_length": rollout_length,
                 "gamma": args.gamma,
                 "lr": args.lr,
-                "num_atoms": 10,
+                "num_atoms": 51,
                 "v_min": -1,
                 "v_max": 5,
                 "n_step": 5,
@@ -79,6 +100,7 @@ def get_trainer(args, env_config, device):
                 "sigma0": 0.5,
                 "hiddens": [args.width],
                 "disable_env_checking": True,
+                "replay_buffer_config": replay_buffer_config
                 # "exploration_config": {
                 #     # The Exploration class to use. In the simplest case, this is the name
                 #     # (str) of any class present in the `rllib.utils.exploration` package.
