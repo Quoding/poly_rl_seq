@@ -25,18 +25,27 @@ class PolypharmacyEnv(gym.Env):
 
         noise = config["noise"]
 
-        self.mean_noise = torch.tensor([0.0])
-        self.std_noise = torch.tensor([noise])
+        # self.mean_noise = torch.tensor([0.0])
+        # self.std_noise = torch.tensor([noise])
+
+        self.mean_noise = np.array([0.0])
+        self.std_noise = np.array([noise])
 
         self.combis, self.risks, self.pat_vecs, self.n_obs, self.n_dim = load_dataset(
             self.dataset_name
+        )
+        self.combis, self.risks, self.pat_vecs = (
+            self.combis.cpu().numpy().astype("int"),
+            self.risks.cpu().numpy(),
+            self.pat_vecs.cpu().numpy().astype("int"),
         )
 
         # Possible Rx IDs to select. Add 1 to n_dim so we have a special "exit" action available to the agent
         self.action_space = gym.spaces.Discrete(self.n_dim + 1)
 
         # Full set of possible combinations + terminal state
-        self.observation_space = gym.spaces.MultiBinary(self.n_dim + 1)
+        # self.observation_space = gym.spaces.MultiBinary(self.n_dim + 1)
+        self.observation_space = gym.spaces.MultiDiscrete([2] * (self.n_dim + 1))
 
         # State equivalent
         self.current_state = None
@@ -50,9 +59,9 @@ class PolypharmacyEnv(gym.Env):
         self.all_observed_states_idx = []
 
     def reset(self):
-        idx = torch.randint(0, len(self.combis), size=(1,))[0]
-        self.current_state = torch.zeros(self.n_dim + 1)
-        self.current_state[: self.n_dim] = torch.tensor(self.combis[idx]).clone()
+        idx = np.random.randint(0, len(self.combis), size=(1,))[0]
+        self.current_state = np.zeros(self.n_dim + 1, dtype=np.int8)
+        self.current_state[: self.n_dim] = self.combis[idx].copy()
         self.record_state(idx.item())
         self.step_count = 0
 
@@ -66,7 +75,7 @@ class PolypharmacyEnv(gym.Env):
 
     def record_state(self, idx):
         self.all_observed_states_idx.append(idx)
-        self.all_observed_states.append(self.current_state.clone())
+        self.all_observed_states.append(self.current_state.copy())
 
     def _is_done(self, action):
         state_sum = self.current_state.sum()
@@ -94,9 +103,14 @@ class PolypharmacyEnv(gym.Env):
             torch.Tensor: nearest neighbor of `vec` in `set_existing_vecs`
         """
         combi = self.current_state[:-1]
-        dists = torch.norm(combi - self.combis, dim=1, p=1)
+        # dists = torch.norm(combi - self.combis, dim=1, p=1)
+        # knn_idx = dists.topk(1, largest=False).indices[0]
+        # new_state = self.combis[knn_idx].clone()
+
+        dists = torch.from_numpy(np.linalg.norm(combi - self.combis, axis=1, ord=1))
         knn_idx = dists.topk(1, largest=False).indices[0]
-        new_state = self.combis[knn_idx].clone()
+        new_state = self.combis[knn_idx].copy()
+
         same_state = (new_state == self.current_state[:-1]).all()
 
         self.current_state[:-1] = new_state
@@ -110,7 +124,7 @@ class PolypharmacyEnv(gym.Env):
 
         # Update state if action wasn't to end the episode
         if reason != "end_action_no_end":
-            self.current_state[action] = (self.current_state[action].bool() ^ 1).float()
+            self.current_state[action] = self.current_state[action] ^ 1
 
         # If we have a shortcut to the reward, take it
         if reason in REASON_TO_REWARD_MAP.keys():
@@ -121,7 +135,7 @@ class PolypharmacyEnv(gym.Env):
             reward = -self.step_penalty
         else:
             knn_idx, same_state = self._bind_state_to_dataset()
-            reward_noise = torch.normal(self.mean_noise, self.std_noise)
+            reward_noise = np.random.normal(self.mean_noise, self.std_noise)
             reward = self.risks[knn_idx] + reward_noise - self.step_penalty
             reward = reward.item()
         self.step_count += 1
@@ -129,37 +143,37 @@ class PolypharmacyEnv(gym.Env):
         return self.current_state, reward, done, done_dict
 
 
-class SingleStartPolypharmacyEnv(PolypharmacyEnv):
-    def __init__(self, config):
-        super.__init__(config)
+# class SingleStartPolypharmacyEnv(PolypharmacyEnv):
+#     def __init__(self, config):
+#         super.__init__(config)
 
-    def reset(self):
-        self.current_state = torch.zeros(self.n_dim + 1).float()
-        self.step_count = 0
+#     def reset(self):
+#         self.current_state = torch.zeros(self.n_dim + 1).float()
+#         self.step_count = 0
 
-        return self.current_state
+#         return self.current_state
 
-    def step(self, action):
-        done_dict = self._is_done(action)
-        done = done_dict["done"]
-        reason = done_dict["reason"]
+#     def step(self, action):
+#         done_dict = self._is_done(action)
+#         done = done_dict["done"]
+#         reason = done_dict["reason"]
 
-        # Update state if action wasn't to end the episode
-        if reason != "end_action_no_end":
-            self.current_state[action] = 1
+#         # Update state if action wasn't to end the episode
+#         if reason != "end_action_no_end":
+#             self.current_state[action] = 1
 
-        # If we have a shortcut to the reward, take it.
-        if reason in REASON_TO_REWARD_MAP.keys():
-            reward = REASON_TO_REWARD_MAP[reason]
-        else:
-            knn_idx = self._bind_state_to_dataset()
-            reward_noise = torch.normal(self.mean_noise, self.std_noise)
-            reward = self.risks[knn_idx] + reward_noise - self.step_penalty
-            reward = reward.item()
+#         # If we have a shortcut to the reward, take it.
+#         if reason in REASON_TO_REWARD_MAP.keys():
+#             reward = REASON_TO_REWARD_MAP[reason]
+#         else:
+#             knn_idx = self._bind_state_to_dataset()
+#             reward_noise = torch.normal(self.mean_noise, self.std_noise)
+#             reward = self.risks[knn_idx] + reward_noise - self.step_penalty
+#             reward = reward.item()
 
-        self.step_count += 1
+#         self.step_count += 1
 
-        return self.current_state, reward, done, done_dict
+#         return self.current_state, reward, done, done_dict
 
 
 class MaskedPolypharmacyEnv(PolypharmacyEnv):
@@ -170,8 +184,11 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
         # Redefine observation space
         self.observation_space = gym.spaces.Dict(
             {
-                "action_mask": gym.spaces.MultiBinary(
-                    self.action_space.n,
+                # "action_mask": gym.spaces.MultiBinary(
+                #     self.action_space.n,
+                # ),
+                "action_mask": gym.spaces.MultiDiscrete(
+                    [2] * self.action_space.n,
                 ),
                 "observations": self.observation_space,
             }
@@ -180,14 +197,20 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
         self.combis_set = map(tuple, tuple(self.combis.tolist()))
 
     def reset(self):
-        idx = torch.randint(0, len(self.combis), size=(1,))[0]
-        self.current_state = torch.zeros(self.n_dim + 1)
-        self.current_state[: self.n_dim] = self.combis[idx].clone()
+        idx = np.random.randint(0, len(self.combis), size=(1,))[0]
+        self.current_state = np.zeros(self.n_dim + 1, dtype=np.int8)
+        self.current_state[: self.n_dim] = self.combis[idx].copy()
         self.record_state(idx.item())
         self.step_count = 0
 
         mask = get_action_mask(self.current_state, self.combis)
-        obs = {"action_mask": mask, "observations": self.current_state}
+
+        obs = {
+            "action_mask": mask,
+            "observations": self.current_state,
+        }
+        print(obs)
+
         # self.previous_mask_avail = np.where(mask == 1)[0]
 
         return obs
@@ -217,7 +240,7 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
 
         # Update state if action wasn't to end the episode
         if reason != "end_action_no_end":
-            self.current_state[action] = (self.current_state[action].bool() ^ 1).float()
+            self.current_state[action] = self.current_state[action] ^ 1
 
         # If we have a shortcut to the reward, take it
         if reason in REASON_TO_REWARD_MAP.keys():
@@ -228,13 +251,17 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
             reward = -self.step_penalty
         else:
             idx = self._find_current_state_idx()
-            reward_noise = torch.normal(self.mean_noise, self.std_noise)
+            reward_noise = np.random.normal(self.mean_noise, self.std_noise)
             reward = self.risks[idx] + reward_noise - self.step_penalty
             reward = reward.item()
 
         self.step_count += 1
         mask = get_action_mask(self.current_state, self.combis)
-        obs = {"action_mask": mask, "observations": self.current_state.cpu().numpy()}
+        obs = {
+            "action_mask": mask,
+            "observations": self.current_state,
+        }
+
         # self.previous_mask_avail = np.where(mask == 1)[0]
 
         return obs, reward, done, done_dict
@@ -290,18 +317,17 @@ def get_action_mask(state, combis):
     # Get rx part
     state = state[:-1]
     n_dim = len(state)
-    dists = torch.norm(state - combis, dim=1, p=1)
-    possible_next_states_idx = torch.where(dists == 1)[0]
+    dists = np.linalg.norm(state - combis, axis=1, ord=1)
+    possible_next_states_idx = np.where(dists == 1)[0]
     possible_next_states = combis[possible_next_states_idx]
 
     # Dimension 0 contains next states, dimension 1 contains location of different bit (actions)
-    available_actions_idx = (
-        torch.where((possible_next_states - state) != 0)[1].cpu().numpy()
-    )
+    available_actions_idx = np.where((possible_next_states - state) != 0)[1]
 
     # Create mask
-    mask = np.zeros((n_dim + 1,), dtype=np.float32)
+    # mask = np.zeros((n_dim + 1,), dtype=np.float32)
+    mask = np.zeros((n_dim + 1,), dtype=np.int8)
     mask[available_actions_idx] = 1
     mask[-1] = 1  # Always let the agent play the "end" action
-
+    print(mask)
     return mask
