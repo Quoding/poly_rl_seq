@@ -44,8 +44,8 @@ class PolypharmacyEnv(gym.Env):
         self.action_space = gym.spaces.Discrete(self.n_dim + 1)
 
         # Full set of possible combinations + terminal state
-        # self.observation_space = gym.spaces.MultiBinary(self.n_dim + 1)
-        self.observation_space = gym.spaces.MultiDiscrete([2] * (self.n_dim + 1))
+        self.observation_space = gym.spaces.MultiBinary(self.n_dim + 1)
+        # self.observation_space = gym.spaces.MultiDiscrete([2] * (self.n_dim + 1))
 
         # State equivalent
         self.current_state = None
@@ -184,12 +184,12 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
         # Redefine observation space
         self.observation_space = gym.spaces.Dict(
             {
-                # "action_mask": gym.spaces.MultiBinary(
-                #     self.action_space.n,
-                # ),
-                "action_mask": gym.spaces.MultiDiscrete(
-                    [2] * self.action_space.n,
+                "action_mask": gym.spaces.MultiBinary(
+                    self.action_space.n,
                 ),
+                # "action_mask": gym.spaces.MultiDiscrete(
+                #     [2] * self.action_space.n,
+                # ),
                 "observations": self.observation_space,
             }
         )
