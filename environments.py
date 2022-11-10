@@ -209,7 +209,6 @@ class MaskedPolypharmacyEnv(PolypharmacyEnv):
             "action_mask": mask,
             "observations": self.current_state,
         }
-        print(obs)
 
         # self.previous_mask_avail = np.where(mask == 1)[0]
 
@@ -329,5 +328,4 @@ def get_action_mask(state, combis):
     mask = np.zeros((n_dim + 1,), dtype=np.int8)
     mask[available_actions_idx] = 1
     mask[-1] = 1  # Always let the agent play the "end" action
-    print(mask)
     return mask
