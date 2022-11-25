@@ -340,7 +340,7 @@ class MaskableDQNTorchModel(DQNTorchModel, nn.Module):
 
         mu = torch.sum(z * support_probs, dim=-1)
 
-        std = (((mu[:, None] - z) ** 2) * support_probs).sum(dim=-1)
+        std = torch.sqrt((((mu[:, None] - z) ** 2) * support_probs).sum(dim=-1))
 
         return mu, std
 
