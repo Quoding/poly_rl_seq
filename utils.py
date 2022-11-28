@@ -90,7 +90,7 @@ def get_trainer(args, env_config, device):
                 "rollout_fragment_length": rollout_length,
                 "gamma": args.gamma,
                 "lr": args.lr,
-                "num_atoms": 51,
+                "num_atoms": 30,
                 "v_min": -1,
                 "v_max": 5,
                 "n_step": 5,
@@ -290,7 +290,7 @@ def get_estimated_state_reward(
     combis_states[:, :d2] = combis
     # combis_states = combis_states.to(device)
     # masks = masks.cpu().numpy() if type(masks) == torch.Tensor else masks
-    taken_actions = []
+    taken_actions = [None] * d1
     for i in range(d1):
         if masks is not None:
             obs = {
@@ -301,11 +301,10 @@ def get_estimated_state_reward(
             obs = {"obs": combis_states[i]}
 
         action = agent.compute_single_action(obs).astype("int64")
-        taken_actions.append(action)
-    taken_actions = torch.tensor(taken_actions)[None].to(device)
+        taken_actions[i] = action
+    taken_actions = torch.tensor(taken_actions)[:, None].to(device)
     combis_states = combis_states.to(device)
     next_states = combis_states.clone()
-
     if masks is not None:
         obs = {
             "obs": {
@@ -344,6 +343,7 @@ def get_estimated_state_reward(
     net(obs)
     next_state_values, std_s2 = net.value_function()
 
+    print(std_s1, std_s2)
     # Gives a worst case estimated reward for the state
     estimated_reward = (state_values - n_sigmas * std_s1 + step_penalty) - gamma * (
         next_state_values + n_sigmas * std_s2
@@ -355,10 +355,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train an RL agent on a given dataset")
 
     parser.add_argument(
-        "-T", "--trials", type=int, default=200, help="Number of steps per iterations"
+        "-T", "--trials", type=int, default=10, help="Number of steps per iterations"
     )
     parser.add_argument(
-        "-I", "--iters", type=int, default=100, help="Number of steps per iterations"
+        "-I",
+        "--iters",
+        type=int,
+        default=100,
+        help="Number of iterations/episodes to do ",
     )
     parser.add_argument(
         "-d", "--dataset", required=True, help="Name of dataset (located in datasets/*)"
