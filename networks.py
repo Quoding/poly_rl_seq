@@ -234,29 +234,34 @@ class MaskableDQNTorchModel(DQNTorchModel, nn.Module):
         orig_space = getattr(obs_space, "original_space", obs_space)
         hiddens = list(model_config.get("fcnet_hiddens", [128]))
         activation = model_config.get("fcnet_activation")
-
         self.n_actions = action_space.n
+
         if isinstance(orig_space["observations"], MultiDiscrete):
             self.dim_obs = len(orig_space["observations"].nvec)
         else:
             self.dim_obs = orig_space["observations"].n
 
-        prev_layer_size = int(np.prod(self.dim_obs))
+        # Hacky, but basically, if net were to have same input size as output size,
+        # then just put an identity layer. Used for testing having no model in front of A and V modules
+        if hiddens == [self.dim_obs]:
+            self._hidden_layers = torch.nn.Identity()
+        else:
+            layers = []
+            prev_layer_size = int(np.prod(self.dim_obs))
 
-        layers = []
-        # Create layers 0 to second-last.
-        for size in hiddens:
-            layers.append(
-                SlimFC(
-                    in_size=prev_layer_size,
-                    out_size=size,
-                    initializer=normc_initializer(1.0),
-                    activation_fn=activation,
+            # Create layers 0 to second-last.
+            for size in hiddens:
+                layers.append(
+                    SlimFC(
+                        in_size=prev_layer_size,
+                        out_size=size,
+                        initializer=normc_initializer(1.0),
+                        activation_fn=activation,
+                    )
                 )
-            )
-            prev_layer_size = size
+                prev_layer_size = size
 
-        self._hidden_layers = nn.Sequential(*layers)
+            self._hidden_layers = nn.Sequential(*layers)
 
     def get_q_value_distributions(self, model_out):
         """Returns distributional values for Q(s, a) given a state embedding.
