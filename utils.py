@@ -82,6 +82,7 @@ def get_trainer(args, env_config, device):
                 "model": {
                     "custom_model": "dqn_custom_net",
                     "fcnet_hiddens": [args.width] * args.layers,
+                    # "fcnet_hiddens": [51],  # determines in num_outputs
                     "fcnet_activation": "relu",
                 },
                 "seed": args.seed,
@@ -98,18 +99,9 @@ def get_trainer(args, env_config, device):
                 "dueling": True,
                 "double_q": True,
                 "sigma0": 0.5,
-                "hiddens": [args.width],
+                "hiddens": [128],
                 "disable_env_checking": True,
-                "replay_buffer_config": replay_buffer_config
-                # "exploration_config": {
-                #     # The Exploration class to use. In the simplest case, this is the name
-                #     # (str) of any class present in the `rllib.utils.exploration` package.
-                #     # You can also provide the python class directly or the full location
-                #     # of your class (e.g. "ray.rllib.utils.exploration.epsilon_greedy.
-                #     # EpsilonGreedy").
-                #     "type": "StochasticSampling",
-                #     # Add constructor kwargs here (if any).
-                # },
+                "replay_buffer_config": replay_buffer_config,
             },
         )
 
