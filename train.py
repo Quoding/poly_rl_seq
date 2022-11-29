@@ -101,6 +101,8 @@ for i in range(args.iters):
     if ((i + 1) * args.trials) % args.eval_step == 0:
         with torch.no_grad():
             trainer.get_policy().config["explore"] = False
+            trainer.save(f"{args.output}/agents_intermediate/{args.seed}/{i + 1}/")
+
             # Evaluate custom metrics
             (
                 metrics_dict,
